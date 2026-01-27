@@ -88,6 +88,7 @@ class DungeonGUI:
         self.remaining_steps: int = 0
         self.current_direction: Optional[Direction] = None
         self.movement_outcomes: List[MoveOutcome] = []
+        self.backtrack_allowed: bool = False  # True when trapped in corner
 
         # UI state
         self.cell_size = 32
@@ -565,11 +566,16 @@ class DungeonGUI:
 
         # Double-check direction is actually legal (safeguard)
         excluded = None
+        allow_backtrack = False
+
         if self.awaiting_direction_change and self.current_direction:
-            excluded = {self.current_direction.reverse()}
+            # When changing direction after wall, check if backtracking was allowed
+            allow_backtrack = getattr(self, 'backtrack_allowed', False)
+            if not allow_backtrack:
+                excluded = {self.current_direction.reverse()}
 
         legal = self.game.movement_engine.get_legal_directions(
-            self.allowed_directions, excluded=excluded, allow_backtrack=False
+            self.allowed_directions, excluded=excluded, allow_backtrack=allow_backtrack
         )
 
         if direction not in legal:
@@ -584,6 +590,7 @@ class DungeonGUI:
             # Changing direction after wall hit
             self.current_direction = direction
             self.awaiting_direction_change = False
+            self.backtrack_allowed = False  # Reset for next wall hit
             self._continue_movement()
 
     def _execute_movement(self):
@@ -640,6 +647,9 @@ class DungeonGUI:
             self._log(f"Path: {self.game.player.path_this_turn}")
             self._log(f"Legal: {[d.name for d in legal]} (excl {reverse_dir.name})")
 
+            # Track if we're allowing backtracking as last resort
+            self.backtrack_allowed = False
+
             if not legal:
                 # Allow backtracking only as last resort (trapped in corner)
                 legal = self.game.movement_engine.get_legal_directions(
@@ -651,6 +661,7 @@ class DungeonGUI:
                     return
                 else:
                     self._log("Trapped! Backtracking allowed.")
+                    self.backtrack_allowed = True
 
             self._update_direction_buttons(legal)
             self.awaiting_direction_change = True
@@ -863,12 +874,17 @@ class DungeonGUI:
             direction = DIRECTION_KEYS[key]
             if self.awaiting_direction or self.awaiting_direction_change:
                 # Check if direction is actually legal (includes backtracking check)
-                # When changing direction after wall hit, also exclude reverse
                 excluded = None
+                allow_backtrack = False
+
                 if self.awaiting_direction_change and self.current_direction:
-                    excluded = {self.current_direction.reverse()}
+                    # Check if backtracking was allowed as last resort
+                    allow_backtrack = getattr(self, 'backtrack_allowed', False)
+                    if not allow_backtrack:
+                        excluded = {self.current_direction.reverse()}
+
                 legal = self.game.movement_engine.get_legal_directions(
-                    self.allowed_directions, excluded=excluded, allow_backtrack=False
+                    self.allowed_directions, excluded=excluded, allow_backtrack=allow_backtrack
                 )
                 if direction in legal:
                     self._on_direction(direction)
