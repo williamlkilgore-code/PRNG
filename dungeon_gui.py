@@ -845,8 +845,12 @@ class DungeonGUI:
             direction = DIRECTION_KEYS[key]
             if self.awaiting_direction or self.awaiting_direction_change:
                 # Check if direction is actually legal (includes backtracking check)
+                # When changing direction after wall hit, also exclude reverse
+                excluded = None
+                if self.awaiting_direction_change and self.current_direction:
+                    excluded = {self.current_direction.reverse()}
                 legal = self.game.movement_engine.get_legal_directions(
-                    self.allowed_directions, allow_backtrack=False
+                    self.allowed_directions, excluded=excluded, allow_backtrack=False
                 )
                 if direction in legal:
                     self._on_direction(direction)
