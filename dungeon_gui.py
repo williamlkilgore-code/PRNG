@@ -563,6 +563,19 @@ class DungeonGUI:
         if not self.awaiting_direction and not self.awaiting_direction_change:
             return
 
+        # Double-check direction is actually legal (safeguard)
+        excluded = None
+        if self.awaiting_direction_change and self.current_direction:
+            excluded = {self.current_direction.reverse()}
+
+        legal = self.game.movement_engine.get_legal_directions(
+            self.allowed_directions, excluded=excluded, allow_backtrack=False
+        )
+
+        if direction not in legal:
+            self._log(f"Direction {direction.name} not legal!")
+            return
+
         if self.awaiting_direction:
             # Starting movement
             self.current_direction = direction
@@ -616,11 +629,16 @@ class DungeonGUI:
             self._log("Hit a wall!")
             self.allowed_directions = self.game.movement_engine.get_allowed_directions(self.current_roll)
             # Don't allow backtracking (moving onto tiles already visited this turn)
+            reverse_dir = self.current_direction.reverse()
             legal = self.game.movement_engine.get_legal_directions(
                 self.allowed_directions,
-                {self.current_direction.reverse()},
+                {reverse_dir},
                 allow_backtrack=False
             )
+
+            # Debug logging
+            self._log(f"Path: {self.game.player.path_this_turn}")
+            self._log(f"Legal: {[d.name for d in legal]} (excl {reverse_dir.name})")
 
             if not legal:
                 # Allow backtracking only as last resort (trapped in corner)
