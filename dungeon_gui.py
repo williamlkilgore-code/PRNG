@@ -674,15 +674,16 @@ class DungeonGUI:
         self.parity_label.config(text="")
         self.status_label.config(text="Press Roll to start turn")
 
-        # Check if on web and exited
+        # Check if on web and exited (only if we're still on a normal floor)
         level = self.game.state.current_level
-        start_pos = self.game.player.path_this_turn[0] if self.game.player.path_this_turn else None
-        if start_pos:
-            cell = level.get_cell(*start_pos)
-            if cell and cell.tile == Tile.WEB and self.game.player.pos != start_pos:
-                level.set_tile(start_pos[0], start_pos[1], Tile.EMPTY)
-                self._log("Escaped the web!")
-                self._render_grid()
+        if level:
+            start_pos = self.game.player.path_this_turn[0] if self.game.player.path_this_turn else None
+            if start_pos:
+                cell = level.get_cell(*start_pos)
+                if cell and cell.tile == Tile.WEB and self.game.player.pos != start_pos:
+                    level.set_tile(start_pos[0], start_pos[1], Tile.EMPTY)
+                    self._log("Escaped the web!")
+                    self._render_grid()
 
     def _complete_floor(self):
         """Complete the current floor."""
@@ -693,7 +694,20 @@ class DungeonGUI:
             return
 
         self.game.advance_to_floor(self.game.state.current_floor + 1)
-        self._finish_turn()
+
+        # Reset turn state (don't call _finish_turn as level changed)
+        self.awaiting_direction = False
+        self.awaiting_direction_change = False
+        self.current_roll = None
+        self.remaining_steps = 0
+
+        for btn in self.direction_buttons.values():
+            btn.config(state=tk.DISABLED, bg=COLORS['bg_button'])
+
+        self.roll_label.config(text="Roll: -")
+        self.parity_label.config(text="")
+        self.status_label.config(text="Press Roll to start turn")
+
         self._update_display()
 
     def _game_over(self):
