@@ -844,7 +844,11 @@ class DungeonGUI:
         if key in DIRECTION_KEYS:
             direction = DIRECTION_KEYS[key]
             if self.awaiting_direction or self.awaiting_direction_change:
-                if direction in self.allowed_directions:
+                # Check if direction is actually legal (includes backtracking check)
+                legal = self.game.movement_engine.get_legal_directions(
+                    self.allowed_directions, allow_backtrack=False
+                )
+                if direction in legal:
                     self._on_direction(direction)
 
     def _use_selected_item(self):

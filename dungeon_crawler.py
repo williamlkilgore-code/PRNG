@@ -734,8 +734,6 @@ class LevelGenerator:
             return grid[y][x].tile
         return None
 
-        return openings
-
 
 # =============================================================================
 # 6) SHOP SYSTEM
@@ -1196,6 +1194,9 @@ class Game:
         """Start a new turn."""
         self.state.turn_number += 1
         self.player.reset_turn_flags()
+
+        # Initialize path with current position to prevent backtracking to start
+        self.player.path_this_turn = [self.player.pos]
 
         # Check if starting on WEB and can move off
         if self.state.current_level:
