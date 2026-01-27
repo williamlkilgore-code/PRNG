@@ -539,6 +539,13 @@ class DungeonGUI:
         # Enable valid direction buttons
         self._update_direction_buttons()
 
+        # Check if any legal moves exist
+        legal = self.game.movement_engine.get_legal_directions(self.allowed_directions, allow_backtrack=False)
+        if not legal:
+            self._log("No legal moves available! Turn skipped.")
+            self._finish_turn()
+            return
+
         self.awaiting_direction = True
         self.status_label.config(text=f"Choose direction ({self.remaining_steps} steps)")
         self._log(f"Rolled {self.current_roll} - {parity_text}")
