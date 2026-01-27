@@ -542,9 +542,12 @@ class DungeonGUI:
         self.status_label.config(text=f"Choose direction ({self.remaining_steps} steps)")
         self._log(f"Rolled {self.current_roll} - {parity_text}")
 
-    def _update_direction_buttons(self):
+    def _update_direction_buttons(self, legal: List[Direction] = None):
         """Enable/disable direction buttons based on allowed directions."""
-        legal = self.game.movement_engine.get_legal_directions(self.allowed_directions)
+        if legal is None:
+            legal = self.game.movement_engine.get_legal_directions(
+                self.allowed_directions, allow_backtrack=False
+            )
 
         for direction, btn in self.direction_buttons.items():
             if direction in legal:
@@ -612,19 +615,26 @@ class DungeonGUI:
             # Need to choose new direction
             self._log("Hit a wall!")
             self.allowed_directions = self.game.movement_engine.get_allowed_directions(self.current_roll)
+            # Don't allow backtracking (moving onto tiles already visited this turn)
             legal = self.game.movement_engine.get_legal_directions(
                 self.allowed_directions,
-                {self.current_direction.reverse()}
+                {self.current_direction.reverse()},
+                allow_backtrack=False
             )
 
             if not legal:
-                legal = self.game.movement_engine.get_legal_directions(self.allowed_directions)
+                # Allow backtracking only as last resort (trapped in corner)
+                legal = self.game.movement_engine.get_legal_directions(
+                    self.allowed_directions, excluded=None, allow_backtrack=True
+                )
                 if not legal:
                     self._log("No valid moves. Turn ends.")
                     self._finish_turn()
                     return
+                else:
+                    self._log("Trapped! Backtracking allowed.")
 
-            self._update_direction_buttons()
+            self._update_direction_buttons(legal)
             self.awaiting_direction_change = True
             self.status_label.config(text=f"Choose new direction ({self.remaining_steps} steps)")
             return

@@ -391,14 +391,14 @@ class LevelGenerator:
         # Place start and stairs
         start_pos, stairs_pos = self._place_start_and_stairs(grid, rooms, layout_rng)
 
-        # Place content (coins, chests, enemies, etc.)
-        self._place_content(grid, rooms, content_rng, start_pos, stairs_pos)
+        # Place locked doors on room entries FIRST (before keys)
+        num_doors = self._place_locked_doors(grid, rooms, layout_rng)
 
         # Place portals
         portal_groups = self._place_portals(grid, rooms, portal_rng)
 
-        # Place locked doors on room entries
-        self._place_locked_doors(grid, rooms, layout_rng)
+        # Place content (coins, chests, enemies, keys based on doors, etc.)
+        self._place_content(grid, rooms, content_rng, start_pos, stairs_pos, num_doors)
 
         return Level(
             floor_number=floor_number,
@@ -519,7 +519,7 @@ class LevelGenerator:
 
     def _place_content(self, grid: List[List[GridCell]], rooms: List[Room],
                        rng: DeterministicRNG, start_pos: Tuple[int, int],
-                       stairs_pos: Tuple[int, int]):
+                       stairs_pos: Tuple[int, int], num_locked_doors: int = 0):
         """Place coins, chests, enemies, hearts, keys, and webs."""
         # Collect all empty tiles (excluding start and stairs)
         empty_tiles = []
@@ -539,7 +539,9 @@ class LevelGenerator:
         num_chests = min(rng.randint(1, 2), tile_count - num_coins)
         num_enemies = min(rng.randint(2, 4), tile_count - num_coins - num_chests)
         num_hearts = min(rng.randint(1, 2), tile_count - num_coins - num_chests - num_enemies)
-        num_keys = min(rng.randint(1, 2), tile_count - num_coins - num_chests - num_enemies - num_hearts)
+        # Place keys based on number of locked doors (at least equal, plus maybe 1 extra)
+        num_keys = num_locked_doors + (1 if num_locked_doors > 0 and rng.randint(0, 2) == 0 else 0)
+        num_keys = min(num_keys, tile_count - num_coins - num_chests - num_enemies - num_hearts)
         num_webs = min(rng.randint(1, 3), tile_count - num_coins - num_chests - num_enemies - num_hearts - num_keys)
 
         idx = 0
@@ -626,8 +628,9 @@ class LevelGenerator:
         return portal_groups
 
     def _place_locked_doors(self, grid: List[List[GridCell]], rooms: List[Room],
-                            rng: DeterministicRNG):
-        """Place locked doors at room entrances."""
+                            rng: DeterministicRNG) -> int:
+        """Place locked doors at room entrances. Returns number of doors placed."""
+        doors_placed = 0
         for room in rooms:
             if rng.randint(0, 2) == 0:  # 1/3 chance for locked door
                 openings = self._find_room_openings(grid, room)
@@ -635,37 +638,101 @@ class LevelGenerator:
                     opening = rng.choice(openings)
                     grid[opening[1]][opening[0]] = GridCell(Tile.LOCKED_DOOR)
                     room.openings.append(opening)
+                    doors_placed += 1
+        return doors_placed
 
     def _find_room_openings(self, grid: List[List[GridCell]], room: Room) -> List[Tuple[int, int]]:
-        """Find potential door positions for a room."""
+        """
+        Find potential door positions for a room.
+        A valid door position must:
+        1. Be an empty tile in a corridor/passage connecting to the room
+        2. Have walls on perpendicular sides (forming a doorway)
+        3. Connect room interior to exterior walkable space
+        """
         openings = []
 
-        # Check boundary tiles
-        for dx in range(-1, room.width + 1):
-            for dy in range(-1, room.height + 1):
-                # Only check boundary
-                if dx in (-1, room.width) or dy in (-1, room.height):
-                    x = room.x + dx
-                    y = room.y + dy
+        # Check tiles adjacent to room boundary (not corners)
+        # North and South edges
+        for dx in range(room.width):
+            for dy, interior_dy in [(-1, 0), (room.height, room.height - 1)]:
+                x = room.x + dx
+                y = room.y + dy
 
-                    if 0 <= x < self.width and 0 <= y < self.height:
-                        cell = grid[y][x]
-                        if cell.tile == Tile.EMPTY:
-                            # Check if it connects room interior to exterior
-                            has_interior = False
-                            has_exterior = False
+                if self._is_valid_door_position(grid, x, y, room, horizontal=True):
+                    openings.append((x, y))
 
-                            for ddx, ddy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                                nx, ny = x + ddx, y + ddy
-                                if 0 <= nx < self.width and 0 <= ny < self.height:
-                                    if (room.x <= nx < room.x + room.width and
-                                        room.y <= ny < room.y + room.height):
-                                        has_interior = True
-                                    elif grid[ny][nx].tile == Tile.EMPTY:
-                                        has_exterior = True
+        # East and West edges
+        for dy in range(room.height):
+            for dx, interior_dx in [(-1, 0), (room.width, room.width - 1)]:
+                x = room.x + dx
+                y = room.y + dy
 
-                            if has_interior and has_exterior:
-                                openings.append((x, y))
+                if self._is_valid_door_position(grid, x, y, room, horizontal=False):
+                    openings.append((x, y))
+
+        return openings
+
+    def _is_valid_door_position(self, grid: List[List[GridCell]], x: int, y: int,
+                                 room: Room, horizontal: bool) -> bool:
+        """
+        Check if position is valid for a door.
+        horizontal=True means passage runs north-south (walls on east-west)
+        horizontal=False means passage runs east-west (walls on north-south)
+        """
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            return False
+
+        cell = grid[y][x]
+        if cell.tile != Tile.EMPTY:
+            return False
+
+        # Check for walls on perpendicular sides
+        if horizontal:
+            # Passage runs N-S, need walls on E and W
+            west = self._get_tile(grid, x - 1, y)
+            east = self._get_tile(grid, x + 1, y)
+            if west != Tile.WALL or east != Tile.WALL:
+                return False
+            # Check passage connects to room and exterior
+            north = self._get_tile(grid, x, y - 1)
+            south = self._get_tile(grid, x, y + 1)
+            has_passage = north not in (Tile.WALL, None) and south not in (Tile.WALL, None)
+        else:
+            # Passage runs E-W, need walls on N and S
+            north = self._get_tile(grid, x, y - 1)
+            south = self._get_tile(grid, x, y + 1)
+            if north != Tile.WALL or south != Tile.WALL:
+                return False
+            # Check passage connects to room and exterior
+            west = self._get_tile(grid, x - 1, y)
+            east = self._get_tile(grid, x + 1, y)
+            has_passage = west not in (Tile.WALL, None) and east not in (Tile.WALL, None)
+
+        if not has_passage:
+            return False
+
+        # Verify it connects room interior to exterior
+        has_interior = False
+        has_exterior = False
+
+        for ddx, ddy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nx, ny = x + ddx, y + ddy
+            if 0 <= nx < self.width and 0 <= ny < self.height:
+                tile = grid[ny][nx].tile
+                in_room = (room.x <= nx < room.x + room.width and
+                          room.y <= ny < room.y + room.height)
+                if in_room and tile != Tile.WALL:
+                    has_interior = True
+                elif not in_room and tile not in (Tile.WALL, None):
+                    has_exterior = True
+
+        return has_interior and has_exterior
+
+    def _get_tile(self, grid: List[List[GridCell]], x: int, y: int) -> Optional[Tile]:
+        """Get tile at position, or None if out of bounds."""
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return grid[y][x].tile
+        return None
 
         return openings
 
@@ -818,8 +885,12 @@ class MovementEngine:
         return True
 
     def get_legal_directions(self, allowed_directions: List[Direction],
-                            excluded: Optional[Set[Direction]] = None) -> List[Direction]:
-        """Get directions that are both allowed and have valid destinations."""
+                            excluded: Optional[Set[Direction]] = None,
+                            allow_backtrack: bool = False) -> List[Direction]:
+        """
+        Get directions that are both allowed and have valid destinations.
+        By default, prevents backtracking onto tiles visited this turn.
+        """
         legal = []
         excluded = excluded or set()
 
@@ -829,6 +900,10 @@ class MovementEngine:
 
             dx, dy = direction.value
             nx, ny = self.player.x + dx, self.player.y + dy
+
+            # Check if this would backtrack onto a tile we already visited this turn
+            if not allow_backtrack and (nx, ny) in self.player.path_this_turn:
+                continue
 
             if self.can_move_to(nx, ny, direction):
                 legal.append(direction)
@@ -985,12 +1060,12 @@ class MovementEngine:
                 # Hit a wall - can change direction
                 forbidden_reversal.add(current_direction.reverse())
 
-                # Find new legal direction
-                legal = self.get_legal_directions(allowed_directions, forbidden_reversal)
+                # Find new legal direction (no backtracking allowed)
+                legal = self.get_legal_directions(allowed_directions, forbidden_reversal, allow_backtrack=False)
 
                 if not legal:
-                    # Check if we're trapped - allow reversal
-                    legal = self.get_legal_directions(allowed_directions)
+                    # Check if we're trapped - allow backtracking as last resort
+                    legal = self.get_legal_directions(allowed_directions, excluded=None, allow_backtrack=True)
                     if not legal:
                         break  # Truly stuck
 
