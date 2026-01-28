@@ -687,6 +687,7 @@ class DungeonGUI:
         # Update display
         self._render_grid()
         self._update_stats()
+        self._update_inventory()
 
         # Check result
         if outcome.result == MovementResult.PLAYER_DIED:
