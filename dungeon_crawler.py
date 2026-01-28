@@ -539,8 +539,8 @@ class LevelGenerator:
         num_chests = min(rng.randint(1, 2), tile_count - num_coins)
         num_enemies = min(rng.randint(2, 4), tile_count - num_coins - num_chests)
         num_hearts = min(rng.randint(1, 2), tile_count - num_coins - num_chests - num_enemies)
-        # Place keys based on number of locked doors (at least equal, plus maybe 1 extra)
-        num_keys = num_locked_doors + (1 if num_locked_doors > 0 and rng.randint(0, 2) == 0 else 0)
+        # Place keys exactly equal to number of locked doors (no extras)
+        num_keys = num_locked_doors
         num_keys = min(num_keys, tile_count - num_coins - num_chests - num_enemies - num_hearts)
         num_webs = min(rng.randint(1, 3), tile_count - num_coins - num_chests - num_enemies - num_hearts - num_keys)
 
@@ -1113,8 +1113,11 @@ class GameState:
 class Game:
     """Main game controller."""
 
+    # Health cap - player can heal up to this amount by collecting hearts
+    MAX_HP_CAP = 32
+
     def __init__(self, master_seed: int = 12345, difficulty: Difficulty = Difficulty.NORMAL,
-                 starting_hp: int = 10, grid_width: int = 15, grid_height: int = 15):
+                 starting_hp: int = 10, max_hp: int = None, grid_width: int = 15, grid_height: int = 15):
         self.master_seed = master_seed
         self.difficulty = difficulty
         self.grid_width = grid_width
@@ -1123,7 +1126,9 @@ class Game:
         self.level_generator = LevelGenerator(master_seed, grid_width, grid_height)
         self.shop_generator = ShopGenerator(master_seed)
 
-        self.player = Player(hp=starting_hp, max_hp=starting_hp)
+        # Start with 10 HP, cap at 32 (can collect hearts to heal up to max)
+        actual_max_hp = max_hp if max_hp is not None else self.MAX_HP_CAP
+        self.player = Player(hp=starting_hp, max_hp=actual_max_hp)
         self.shop_floors = self.shop_generator.get_shop_floors()
 
         self.state = GameState(
