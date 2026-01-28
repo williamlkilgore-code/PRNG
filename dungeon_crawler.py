@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Set, Callable
 import hashlib
 import struct
+import json
+import os
 
 
 # =============================================================================
@@ -1350,6 +1352,94 @@ class Game:
                 lines.append("\n" + self.state.current_level.render(self.player.pos))
 
         return '\n'.join(lines)
+
+    # =========================================================================
+    # SAVE / LOAD SYSTEM
+    # =========================================================================
+
+    def get_save_data(self) -> dict:
+        """Get game state as a dictionary for saving."""
+        return {
+            'version': 1,
+            'master_seed': self.master_seed,
+            'difficulty': self.difficulty.name,
+            'current_floor': self.state.current_floor,
+            'player': {
+                'hp': self.player.hp,
+                'max_hp': self.player.max_hp,
+                'coins': self.player.coins,
+                'keys': self.player.keys,
+                'inventory': [item.name for item in self.player.inventory],
+            },
+            'turn_number': self.state.turn_number,
+        }
+
+    def save_game(self, filepath: str) -> bool:
+        """Save game state to a file. Returns True on success."""
+        try:
+            save_data = self.get_save_data()
+            with open(filepath, 'w') as f:
+                json.dump(save_data, f, indent=2)
+            return True
+        except (IOError, OSError) as e:
+            print(f"Error saving game: {e}")
+            return False
+
+    @classmethod
+    def load_game(cls, filepath: str) -> Optional['Game']:
+        """Load game from a save file. Returns Game instance or None on failure."""
+        try:
+            with open(filepath, 'r') as f:
+                save_data = json.load(f)
+
+            # Validate version
+            if save_data.get('version', 0) != 1:
+                print("Incompatible save file version")
+                return None
+
+            # Create game with saved parameters
+            difficulty = Difficulty[save_data['difficulty']]
+            game = cls(
+                master_seed=save_data['master_seed'],
+                difficulty=difficulty,
+                starting_hp=save_data['player']['hp'],
+                max_hp=save_data['player']['max_hp'],
+            )
+
+            # Restore player state
+            game.player.coins = save_data['player']['coins']
+            game.player.keys = save_data['player']['keys']
+            game.player.inventory = [
+                ItemType[name] for name in save_data['player']['inventory']
+            ]
+
+            # Advance to saved floor
+            game.advance_to_floor(save_data['current_floor'])
+            game.state.turn_number = save_data.get('turn_number', 0)
+
+            return game
+
+        except (IOError, OSError, json.JSONDecodeError, KeyError) as e:
+            print(f"Error loading game: {e}")
+            return None
+
+    @staticmethod
+    def get_default_save_path() -> str:
+        """Get the default save file path."""
+        # Use user's home directory for cross-platform compatibility
+        home = os.path.expanduser("~")
+        save_dir = os.path.join(home, ".dungeon_crawler")
+        os.makedirs(save_dir, exist_ok=True)
+        return os.path.join(save_dir, "savegame.json")
+
+    @staticmethod
+    def list_save_files() -> List[str]:
+        """List all save files in the default save directory."""
+        home = os.path.expanduser("~")
+        save_dir = os.path.join(home, ".dungeon_crawler")
+        if not os.path.exists(save_dir):
+            return []
+        return [f for f in os.listdir(save_dir) if f.endswith('.json')]
 
 
 # =============================================================================

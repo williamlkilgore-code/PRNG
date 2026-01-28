@@ -12,6 +12,7 @@ from dungeon_crawler import (
     MovementEngine, MovementResult, MoveOutcome,
     ITEM_NAMES, ITEM_COSTS, hash_seed
 )
+import os
 
 
 # =============================================================================
@@ -202,6 +203,34 @@ class DungeonGUI:
         self.diff_label = ttk.Label(diff_frame, text="Normal", style='Stat.TLabel')
         self.diff_label.pack(side=tk.RIGHT)
 
+        # Save and Help buttons
+        btn_row = ttk.Frame(stats_frame, style='Panel.TFrame')
+        btn_row.pack(fill=tk.X, pady=(10, 0))
+
+        tk.Button(
+            btn_row, text="💾 Save",
+            command=self._save_game,
+            bg=COLORS['bg_button'], fg=COLORS['fg_text'],
+            font=('Helvetica', 9),
+            relief=tk.FLAT, padx=8, pady=3
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Button(
+            btn_row, text="❓ Help",
+            command=self._show_help,
+            bg=COLORS['bg_button'], fg=COLORS['fg_text'],
+            font=('Helvetica', 9),
+            relief=tk.FLAT, padx=8, pady=3
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Button(
+            btn_row, text="🔄 New",
+            command=lambda: self._show_start_screen(show_splash=False),
+            bg=COLORS['bg_button'], fg=COLORS['fg_text'],
+            font=('Helvetica', 9),
+            relief=tk.FLAT, padx=8, pady=3
+        ).pack(side=tk.LEFT)
+
     def _create_movement_panel(self):
         """Create movement controls panel."""
         move_frame = ttk.LabelFrame(
@@ -335,12 +364,29 @@ class DungeonGUI:
     # GAME INITIALIZATION
     # =========================================================================
 
-    def _show_start_screen(self):
+    def _show_start_screen(self, show_splash: bool = True):
         """Show the game start dialog."""
+        # Show splash/help screen on first launch
+        if show_splash:
+            splash = HelpDialog(self.master, show_continue=True)
+            self.master.wait_window(splash)
+
         dialog = StartGameDialog(self.master)
         self.master.wait_window(dialog)
 
-        if dialog.result:
+        if dialog.load_result:
+            # Load saved game
+            loaded_game = Game.load_game(dialog.load_result)
+            if loaded_game:
+                self.game = loaded_game
+                self._log(f"Loaded game from floor {self.game.state.current_floor}")
+                self._log(f"HP: {self.game.player.hp}/{self.game.player.max_hp}")
+                self._log(f"Coins: {self.game.player.coins}")
+                self._update_display()
+            else:
+                messagebox.showerror("Load Error", "Failed to load save file!")
+                self._show_start_screen(show_splash=False)
+        elif dialog.result:
             seed, difficulty = dialog.result
             self._start_game(seed, difficulty)
         else:
@@ -356,6 +402,24 @@ class DungeonGUI:
         self._log(f"Shop floors: {self.game.shop_floors[:5]}...")
 
         self._update_display()
+
+    def _save_game(self):
+        """Save the current game state."""
+        if not self.game:
+            return
+
+        save_path = Game.get_default_save_path()
+        if self.game.save_game(save_path):
+            self._log(f"Game saved! Floor {self.game.state.current_floor}")
+            messagebox.showinfo("Saved", f"Game saved successfully!\nFloor: {self.game.state.current_floor}")
+        else:
+            self._log("Failed to save game!")
+            messagebox.showerror("Save Error", "Failed to save game!")
+
+    def _show_help(self):
+        """Show the help dialog."""
+        help_dialog = HelpDialog(self.master, show_continue=False)
+        self.master.wait_window(help_dialog)
 
     # =========================================================================
     # DISPLAY UPDATES
@@ -968,6 +1032,151 @@ class DungeonGUI:
 
 
 # =============================================================================
+# HELP / SPLASH SCREEN DIALOG
+# =============================================================================
+
+class HelpDialog(tk.Toplevel):
+    """Dialog showing game instructions and tile explanations."""
+
+    HELP_TEXT = """
+╔══════════════════════════════════════════════════════════════╗
+║           PROCEDURAL DUNGEON CRAWLER - HELP                  ║
+╚══════════════════════════════════════════════════════════════╝
+
+═══ OBJECTIVE ═══
+Navigate through 100 procedurally-generated dungeon floors.
+Reach the stairs (▼) on each floor to advance.
+
+═══ MOVEMENT ═══
+Each turn, roll a die (1-6) to determine movement:
+
+  • EVEN rolls (2, 4, 6): Move ORTHOGONALLY
+    Use N, S, E, W directions only
+
+  • ODD rolls (1, 3, 5): Move DIAGONALLY
+    Use NE, NW, SE, SW directions only
+
+The roll number = how many tiles you must move.
+You cannot backtrack over tiles visited this turn.
+If you hit a wall, choose a new valid direction.
+
+═══ CONTROLS ═══
+  Keyboard:
+    W / ↑     = North          Q = Northwest    E = Northeast
+    A / ←     = West           Z = Southwest    C = Southeast
+    S / ↓     = South
+    D / →     = East
+    Space/Enter = Roll Die
+
+═══ TILES ═══
+  ●  Coin      - Collect for currency (+1 coin)
+  ◆  Chest     - Open for coins (roll d6 for amount)
+  ♥  Heart     - Heal HP (roll d6 for amount, up to max 32)
+  ◈  Enemy     - Takes damage when passed (damage = difficulty)
+  ⚷  Key       - Collect to open locked doors
+  ▣  Door      - Requires a key to pass through
+  ◎  Portal    - Teleport to linked portal (once per turn)
+  ※  Web       - Lose coins, next move halved, turn ends
+  ▼  Stairs    - Advance to next floor
+
+═══ DIFFICULTY ═══
+  Easy    - Enemies deal 2 damage
+  Normal  - Enemies deal 4 damage
+  Hard    - Enemies deal 8 damage
+  Demonic - Enemies deal 10 damage
+
+═══ SHOP FLOORS ═══
+Every 7-10 floors is a shop where you can:
+  • Buy items with coins
+  • Gamble (high/low) for more coins
+  • Press 1-4 to buy, G to gamble, L to leave
+
+═══ ITEMS ═══
+  Compass of True North - Ignore parity, any direction allowed
+  Anchor Stone          - Stop movement early
+  Smoke Bomb            - Negate one enemy attack
+  Loaded Dice           - Choose your next roll (1-6)
+  Lucky Charm           - Adjust roll by +1 or -1
+  Lockpick              - Open a locked door without a key
+  Parity Flip           - Swap odd/even direction rules
+
+═══ TIPS ═══
+  • Collect hearts to build HP above starting 10 (max 32)
+  • Plan your route to avoid enemies when low on HP
+  • Save your game when you reach a new floor!
+  • Keys are precious - there's exactly one per door
+"""
+
+    def __init__(self, parent, show_continue: bool = True):
+        super().__init__(parent)
+        self.title("How to Play")
+        self.result = None
+
+        self.configure(bg=COLORS['bg_panel'])
+        self.transient(parent)
+        self.grab_set()
+
+        # Make it larger for the help text
+        self.geometry("680x600")
+
+        # Title
+        title_frame = tk.Frame(self, bg=COLORS['bg_dark'])
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(
+            title_frame, text="⚔ DUNGEON CRAWLER ⚔",
+            bg=COLORS['bg_dark'], fg=COLORS['accent'],
+            font=('Helvetica', 20, 'bold')
+        ).pack(pady=15)
+
+        # Scrollable text area
+        text_frame = tk.Frame(self, bg=COLORS['bg_panel'])
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10)
+
+        scrollbar = tk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.help_text = tk.Text(
+            text_frame,
+            bg=COLORS['bg_dark'],
+            fg=COLORS['fg_text'],
+            font=('Consolas', 10),
+            wrap=tk.WORD,
+            yscrollcommand=scrollbar.set,
+            highlightthickness=0,
+            relief=tk.FLAT,
+            padx=10,
+            pady=10
+        )
+        self.help_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.help_text.yview)
+
+        # Insert help text
+        self.help_text.insert(tk.END, self.HELP_TEXT)
+        self.help_text.config(state=tk.DISABLED)
+
+        # Button frame
+        btn_frame = tk.Frame(self, bg=COLORS['bg_panel'])
+        btn_frame.pack(fill=tk.X, pady=15)
+
+        btn_text = "Continue" if show_continue else "Close"
+        tk.Button(
+            btn_frame, text=btn_text,
+            command=self._on_close,
+            bg=COLORS['accent'], fg='white',
+            font=('Helvetica', 12, 'bold'),
+            relief=tk.FLAT, padx=30, pady=10
+        ).pack()
+
+        self.bind('<Return>', lambda e: self._on_close())
+        self.bind('<Escape>', lambda e: self._on_close())
+
+    def _on_close(self):
+        self.result = True
+        self.destroy()
+
+
+# =============================================================================
 # START GAME DIALOG
 # =============================================================================
 
@@ -976,44 +1185,62 @@ class StartGameDialog(tk.Toplevel):
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.title("New Game")
+        self.title("Dungeon Crawler")
         self.result = None
+        self.load_result = None  # For loading saved games
 
         self.configure(bg=COLORS['bg_panel'])
         self.transient(parent)
         self.grab_set()
 
         # Center on parent
-        self.geometry("300x250")
+        self.geometry("320x380")
 
         # Title
         tk.Label(
-            self, text="Dungeon Crawler",
+            self, text="⚔ Dungeon Crawler ⚔",
             bg=COLORS['bg_panel'], fg=COLORS['accent'],
-            font=('Helvetica', 16, 'bold')
-        ).pack(pady=(20, 10))
+            font=('Helvetica', 18, 'bold')
+        ).pack(pady=(20, 5))
+
+        tk.Label(
+            self, text="100 Floors of Procedural Adventure",
+            bg=COLORS['bg_panel'], fg=COLORS['fg_dim'],
+            font=('Helvetica', 9, 'italic')
+        ).pack(pady=(0, 15))
+
+        # New Game section
+        new_frame = tk.LabelFrame(
+            self, text="New Game",
+            bg=COLORS['bg_panel'], fg=COLORS['fg_text'],
+            font=('Helvetica', 10)
+        )
+        new_frame.pack(fill=tk.X, padx=20, pady=5)
 
         # Seed input
-        tk.Label(
-            self, text="Seed (number or text):",
-            bg=COLORS['bg_panel'], fg=COLORS['fg_text']
-        ).pack()
+        seed_frame = tk.Frame(new_frame, bg=COLORS['bg_panel'])
+        seed_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        self.seed_entry = tk.Entry(self, width=20)
+        tk.Label(
+            seed_frame, text="Seed:",
+            bg=COLORS['bg_panel'], fg=COLORS['fg_text']
+        ).pack(side=tk.LEFT)
+
+        self.seed_entry = tk.Entry(seed_frame, width=15)
         self.seed_entry.insert(0, "12345")
-        self.seed_entry.pack(pady=(5, 15))
+        self.seed_entry.pack(side=tk.RIGHT)
 
         # Difficulty selection
         tk.Label(
-            self, text="Difficulty:",
+            new_frame, text="Difficulty:",
             bg=COLORS['bg_panel'], fg=COLORS['fg_text']
-        ).pack()
+        ).pack(pady=(5, 0))
 
         self.difficulty_var = tk.StringVar(value="NORMAL")
         difficulties = [("Easy", "EASY"), ("Normal", "NORMAL"),
                        ("Hard", "HARD"), ("Demonic", "DEMONIC")]
 
-        diff_frame = tk.Frame(self, bg=COLORS['bg_panel'])
+        diff_frame = tk.Frame(new_frame, bg=COLORS['bg_panel'])
         diff_frame.pack(pady=5)
 
         for text, value in difficulties:
@@ -1021,16 +1248,59 @@ class StartGameDialog(tk.Toplevel):
                 diff_frame, text=text, variable=self.difficulty_var,
                 value=value, bg=COLORS['bg_panel'], fg=COLORS['fg_text'],
                 selectcolor=COLORS['bg_dark'], activebackground=COLORS['bg_panel']
-            ).pack(side=tk.LEFT, padx=5)
+            ).pack(side=tk.LEFT, padx=3)
 
         # Start button
         tk.Button(
-            self, text="Start Game",
+            new_frame, text="Start New Game",
             command=self._on_start,
             bg=COLORS['accent'], fg='white',
-            font=('Helvetica', 11, 'bold'),
-            relief=tk.FLAT, padx=20, pady=8
-        ).pack(pady=20)
+            font=('Helvetica', 10, 'bold'),
+            relief=tk.FLAT, padx=15, pady=6
+        ).pack(pady=10)
+
+        # Load Game section
+        load_frame = tk.Frame(self, bg=COLORS['bg_panel'])
+        load_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        # Check if save file exists
+        self.save_path = Game.get_default_save_path()
+        save_exists = os.path.exists(self.save_path)
+
+        load_btn = tk.Button(
+            load_frame, text="Load Saved Game",
+            command=self._on_load,
+            bg=COLORS['bg_button'] if save_exists else COLORS['bg_dark'],
+            fg=COLORS['fg_text'] if save_exists else COLORS['fg_dim'],
+            font=('Helvetica', 10),
+            relief=tk.FLAT, padx=15, pady=6,
+            state=tk.NORMAL if save_exists else tk.DISABLED
+        )
+        load_btn.pack(fill=tk.X)
+
+        if save_exists:
+            # Show save info
+            try:
+                import json
+                with open(self.save_path, 'r') as f:
+                    save_data = json.load(f)
+                info_text = f"Floor {save_data['current_floor']} | {save_data['difficulty']} | HP: {save_data['player']['hp']}"
+                tk.Label(
+                    load_frame, text=info_text,
+                    bg=COLORS['bg_panel'], fg=COLORS['fg_dim'],
+                    font=('Helvetica', 8)
+                ).pack(pady=(2, 0))
+            except:
+                pass
+
+        # Help button
+        tk.Button(
+            self, text="How to Play",
+            command=self._show_help,
+            bg=COLORS['bg_button'], fg=COLORS['fg_text'],
+            font=('Helvetica', 10),
+            relief=tk.FLAT, padx=15, pady=6
+        ).pack(pady=10)
 
         # Focus on seed entry
         self.seed_entry.focus_set()
@@ -1047,6 +1317,16 @@ class StartGameDialog(tk.Toplevel):
         difficulty = Difficulty[self.difficulty_var.get()]
         self.result = (seed, difficulty)
         self.destroy()
+
+    def _on_load(self):
+        """Handle load game button click."""
+        self.load_result = self.save_path
+        self.destroy()
+
+    def _show_help(self):
+        """Show the help dialog."""
+        help_dialog = HelpDialog(self, show_continue=True)
+        self.wait_window(help_dialog)
 
 
 # =============================================================================
