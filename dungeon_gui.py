@@ -142,7 +142,7 @@ class DungeonGUI:
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
         # Right panel - Stats and controls
-        self.right_panel = ttk.Frame(self.main_frame, style='Panel.TFrame', width=280)
+        self.right_panel = ttk.Frame(self.main_frame, style='Panel.TFrame', width=320)
         self.right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
         self.right_panel.pack_propagate(False)
 
@@ -1336,8 +1336,8 @@ class StartGameDialog(tk.Toplevel):
 def main():
     """Launch the GUI application."""
     root = tk.Tk()
-    root.geometry("1000x700")
-    root.minsize(800, 600)
+    root.geometry("1200x800")
+    root.minsize(1000, 700)
 
     app = DungeonGUI(root)
 
