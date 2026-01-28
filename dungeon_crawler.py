@@ -811,6 +811,7 @@ class MoveOutcome:
     keys_used: int = 0
     portal_teleported: bool = False
     portal_destination: Optional[Tuple[int, int]] = None
+    smoke_bomb_used: bool = False
 
 
 class MovementEngine:
@@ -911,7 +912,6 @@ class MovementEngine:
         return legal
 
     def execute_step(self, direction: Direction, use_lockpick: bool = False,
-                    use_smoke_bomb: bool = False,
                     portal_choice: Optional[Tuple[int, int]] = None) -> MoveOutcome:
         """Execute a single movement step and handle tile effects."""
         dx, dy = direction.value
@@ -966,8 +966,10 @@ class MovementEngine:
             outcome.tile_effect_triggered = True
 
         elif cell.tile == Tile.ENEMY:
-            if use_smoke_bomb and self.player.has_item(ItemType.SMOKE_BOMB):
+            # Automatically use smoke bomb if player has one
+            if self.player.has_item(ItemType.SMOKE_BOMB):
                 self.player.use_item(ItemType.SMOKE_BOMB)
+                outcome.smoke_bomb_used = True
                 # Enemy damage negated
             else:
                 damage = self.difficulty.value
@@ -976,6 +978,7 @@ class MovementEngine:
                 if not alive:
                     outcome.result = MovementResult.PLAYER_DIED
                     return outcome
+            self.level.set_tile(nx, ny, Tile.EMPTY)
             outcome.tile_effect_triggered = True
 
         elif cell.tile == Tile.WEB:

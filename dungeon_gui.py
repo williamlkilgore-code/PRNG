@@ -751,6 +751,8 @@ class DungeonGUI:
     def _log_outcome(self, outcome: MoveOutcome):
         """Log movement outcome effects."""
         effects = []
+        if outcome.smoke_bomb_used:
+            effects.append("Smoke Bomb blocked enemy!")
         if outcome.coins_gained:
             effects.append(f"+{outcome.coins_gained} coins")
         if outcome.coins_lost:
