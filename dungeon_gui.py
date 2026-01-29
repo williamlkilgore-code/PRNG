@@ -978,10 +978,12 @@ class DungeonGUI:
         # Handle different item types
         if item == ItemType.COMPASS_OF_TRUE_NORTH:
             if not self.awaiting_direction:
-                self._log("Use Compass before rolling!")
+                self._log("Use Compass after rolling!")
                 return
             if self.game.use_compass():
                 self._log("Compass activated - any direction allowed!")
+                # Update allowed directions now that compass is active
+                self.allowed_directions = self.game.movement_engine.get_allowed_directions(self.current_roll)
                 self._update_direction_buttons()
                 self._update_inventory()
 
