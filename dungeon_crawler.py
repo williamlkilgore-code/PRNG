@@ -523,17 +523,25 @@ class LevelGenerator:
                        rng: DeterministicRNG, start_pos: Tuple[int, int],
                        stairs_pos: Tuple[int, int], num_locked_doors: int = 0):
         """Place coins, chests, enemies, hearts, keys, and webs."""
+        # Find tiles reachable from start WITHOUT going through locked doors
+        # This ensures keys are always accessible
+        reachable = self._find_reachable_tiles(grid, start_pos)
+
         # Collect all empty tiles (excluding start and stairs)
         empty_tiles = []
+        reachable_empty = []
         for y in range(self.height):
             for x in range(self.width):
                 if grid[y][x].tile == Tile.EMPTY and (x, y) not in (start_pos, stairs_pos):
                     empty_tiles.append((x, y))
+                    if (x, y) in reachable:
+                        reachable_empty.append((x, y))
 
         if not empty_tiles:
             return
 
         rng.shuffle(empty_tiles)
+        rng.shuffle(reachable_empty)
 
         # Determine counts based on available space
         tile_count = len(empty_tiles)
@@ -542,9 +550,21 @@ class LevelGenerator:
         num_enemies = min(rng.randint(2, 4), tile_count - num_coins - num_chests)
         num_hearts = min(rng.randint(1, 2), tile_count - num_coins - num_chests - num_enemies)
         # Place keys exactly equal to number of locked doors (no extras)
-        num_keys = num_locked_doors
-        num_keys = min(num_keys, tile_count - num_coins - num_chests - num_enemies - num_hearts)
+        # Keys MUST be placed in reachable tiles only
+        num_keys = min(num_locked_doors, len(reachable_empty))
         num_webs = min(rng.randint(1, 3), tile_count - num_coins - num_chests - num_enemies - num_hearts - num_keys)
+
+        # Place keys FIRST in reachable tiles only
+        key_positions = set()
+        for i in range(num_keys):
+            if i < len(reachable_empty):
+                x, y = reachable_empty[i]
+                grid[y][x] = GridCell(Tile.KEY)
+                key_positions.add((x, y))
+
+        # Remove key positions from empty_tiles
+        empty_tiles = [t for t in empty_tiles if t not in key_positions]
+        rng.shuffle(empty_tiles)
 
         idx = 0
 
@@ -576,19 +596,38 @@ class LevelGenerator:
                 grid[y][x] = GridCell(Tile.HEART_UNKNOWN)
                 idx += 1
 
-        # Place keys
-        for _ in range(num_keys):
-            if idx < len(empty_tiles):
-                x, y = empty_tiles[idx]
-                grid[y][x] = GridCell(Tile.KEY)
-                idx += 1
-
         # Place webs
         for _ in range(num_webs):
             if idx < len(empty_tiles):
                 x, y = empty_tiles[idx]
                 grid[y][x] = GridCell(Tile.WEB)
                 idx += 1
+
+    def _find_reachable_tiles(self, grid: List[List[GridCell]],
+                               start_pos: Tuple[int, int]) -> Set[Tuple[int, int]]:
+        """Find all tiles reachable from start without going through locked doors."""
+        reachable = set()
+        queue = [start_pos]
+        reachable.add(start_pos)
+
+        while queue:
+            x, y = queue.pop(0)
+            # Check all 8 directions (including diagonals for movement)
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1),
+                          (-1, -1), (-1, 1), (1, -1), (1, 1)]:
+                nx, ny = x + dx, y + dy
+                if (nx, ny) in reachable:
+                    continue
+                if not (0 <= nx < self.width and 0 <= ny < self.height):
+                    continue
+                tile = grid[ny][nx].tile
+                # Can't pass through walls or locked doors
+                if tile == Tile.WALL or tile == Tile.LOCKED_DOOR:
+                    continue
+                reachable.add((nx, ny))
+                queue.append((nx, ny))
+
+        return reachable
 
     def _place_portals(self, grid: List[List[GridCell]], rooms: List[Room],
                        rng: DeterministicRNG) -> Dict[int, List[Tuple[int, int]]]:
