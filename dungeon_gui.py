@@ -867,17 +867,27 @@ class DungeonGUI:
         shop = self.game.state.current_shop
         y = 140
 
-        # Draw items
+        # Draw items (keep positions fixed, mark purchased items)
         for i, item in enumerate(shop.inventory):
             price = ITEM_COSTS[item]
             name = ITEM_NAMES[item]
+            is_purchased = shop.purchased[i] if i < len(shop.purchased) else False
             can_afford = self.game.player.coins >= price
 
-            color = COLORS['fg_text'] if can_afford else COLORS['fg_dim']
+            if is_purchased:
+                # Show purchased items as struck through / grayed
+                display_text = f"{i+1}. {name} - SOLD"
+                color = COLORS['fg_dim']
+            elif can_afford:
+                display_text = f"{i+1}. {name} - {price} coins"
+                color = COLORS['fg_text']
+            else:
+                display_text = f"{i+1}. {name} - {price} coins"
+                color = COLORS['fg_dim']
 
             self.canvas.create_text(
                 self.canvas.winfo_width() // 2, y,
-                text=f"{i+1}. {name} - {price} coins",
+                text=display_text,
                 fill=color, font=('Helvetica', 12)
             )
             y += 30
@@ -913,12 +923,18 @@ class DungeonGUI:
         if key in '1234':
             idx = int(key) - 1
             if idx < len(shop.inventory):
+                # Check if already purchased
+                if not shop.is_available(idx):
+                    self._log("Already purchased!")
+                    return
                 item = shop.inventory[idx]
-                if self.game.buy_item(item):
+                price = ITEM_COSTS[item]
+                if self.game.player.coins < price:
+                    self._log("Not enough coins!")
+                    return
+                if self.game.buy_item_by_index(idx):
                     self._log(f"Bought {ITEM_NAMES[item]}!")
                     self._update_display()
-                else:
-                    self._log("Not enough coins!")
 
         elif key.lower() == 'g':
             # Gamble dialog

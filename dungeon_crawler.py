@@ -786,10 +786,25 @@ class Shop:
     floor_number: int
     inventory: List[ItemType]
     shop_seed: int
+    purchased: List[bool] = field(default_factory=list)
+
+    def __post_init__(self):
+        """Initialize purchased tracking."""
+        if not self.purchased:
+            self.purchased = [False] * len(self.inventory)
 
     def get_price(self, item: ItemType) -> int:
         """Get price for an item."""
         return ITEM_COSTS[item]
+
+    def is_available(self, index: int) -> bool:
+        """Check if item at index is available for purchase."""
+        return 0 <= index < len(self.inventory) and not self.purchased[index]
+
+    def mark_purchased(self, index: int):
+        """Mark item at index as purchased."""
+        if 0 <= index < len(self.purchased):
+            self.purchased[index] = True
 
 
 class ShopGenerator:
@@ -1291,23 +1306,35 @@ class Game:
             self.advance_to_floor(self.state.current_floor + 1)
 
     # Shop operations
-    def buy_item(self, item: ItemType) -> bool:
-        """Attempt to buy an item from shop."""
+    def buy_item_by_index(self, index: int) -> bool:
+        """Attempt to buy an item from shop by index."""
         if not self.is_shop_floor():
             return False
 
         shop = self.state.current_shop
-        if item not in shop.inventory:
+        if not shop.is_available(index):
             return False
 
+        item = shop.inventory[index]
         price = shop.get_price(item)
         if self.player.coins < price:
             return False
 
         self.player.coins -= price
         self.player.inventory.append(item)
-        shop.inventory.remove(item)
+        shop.mark_purchased(index)
         return True
+
+    def buy_item(self, item: ItemType) -> bool:
+        """Attempt to buy an item from shop (legacy, finds first available)."""
+        if not self.is_shop_floor():
+            return False
+
+        shop = self.state.current_shop
+        for i, inv_item in enumerate(shop.inventory):
+            if inv_item == item and shop.is_available(i):
+                return self.buy_item_by_index(i)
+        return False
 
     def gamble(self, choice: str) -> Tuple[bool, int]:
         """
