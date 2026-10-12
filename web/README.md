@@ -6,6 +6,8 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
 
 **Test:** `node web/tests/run-tests.js`
 
+**Rebuilding or changing the game?** Start with [GAME_SPEC.md](GAME_SPEC.md). It has the full rules, architecture, data model, algorithms, and step-by-step guides for common changes.
+
 ## Rules implemented
 
 - **Movement:** roll 2d6. The total is how many squares you move. An even total moves orthogonally and an odd total moves diagonally. Once you pick a direction you keep going until your moves run out. If you're blocked with moves left, you pick a new legal direction. You can't pick the reverse of a direction already used this turn unless that is the only legal move. Diagonal moves can't squeeze between two walls that meet at a corner.
