@@ -30,7 +30,7 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
   - **Invisibility:** pass through enemies for one turn.
   - No Clipping and Invisibility are "armed" first, and a charge is used up only if the spell actually takes effect.
 
-The game seed decides every floor, so the same seed always gives the same dungeon. Progress auto-saves to `localStorage`. The **Saves** menu keeps up to 12 named save slots in the browser and can export the current game to a `.json` file or import one.
+The game seed decides every floor, so the same seed always gives the same dungeon. **Saving:** the game saves a small checkpoint each time you reach a new floor: the seed, the floor number, your stats, coins and spells. The floor itself is rebuilt from the seed, so loading restarts that floor from its beginning, and progress inside a floor isn't saved. The **Saves** menu offers up to 12 named slots in the browser, a copyable save code, and export/import of a `.json` save file.
 
 ## Files
 

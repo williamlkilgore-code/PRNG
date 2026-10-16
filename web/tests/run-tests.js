@@ -196,23 +196,80 @@ test('diagonal redirect avoids retracing this turn\'s path', () => {
   ok(!g.choose('NW'), 'NW refused');
 });
 
-test('save validation', () => {
-  const g = Game.create('valid');
-  const clone = () => JSON.parse(JSON.stringify(g.s));
-  ok(Game.validate(clone()) === null, 'fresh game is valid');
-  ok(Game.load(clone()) instanceof Game, 'loads');
+// Plays the current floor with a seeded policy until it ends; returns a summary.
+function playFloor(g, policySeed) {
+  const pick = new DC.RNG(policySeed);
+  for (let i = 0; i < 3000; i++) {
+    const s = g.s;
+    if (s.phase === 'roll') g.roll();
+    else if (s.phase === 'choose' || s.phase === 'redirect') {
+      const d = g.availableDirs();
+      if (!d.length) g.passTurn(); else g.choose(pick.pick(d));
+      while (g.s.phase === 'moving') g.step();
+    } else break;
+  }
+  const p = g.s.player;
+  return JSON.stringify([g.s.phase, g.s.turn, p.hp, p.coins, p.x, p.y, g.s.level && g.s.level.trail]);
+}
+
+test('checkpoint saves', () => {
+  const g = Game.create('checkpoint');
+  const start = JSON.parse(JSON.stringify(g.s.checkpoint));
+  ok(start.floor === 1 && start.seedText === 'checkpoint' && Game.validateCheckpoint(start) === null, 'checkpoint at floor start');
+  ok(JSON.stringify(start).length < 400, 'checkpoint is small');
+  g.s.player.hp = g.s.player.maxHp = 1000;
+  const cpHigh = JSON.parse(JSON.stringify(g.checkpointFor(1)));
+  const a = playFloor(g, 42);
+  ok(g.s.phase === 'levelDone' && g.s.checkpoint.floor === 2, 'checkpoint moves to next floor on completion');
+
+  // Reloading a floor gives the same layout and the same dice: identical play.
+  const r = Game.fromSave(cpHigh);
+  ok(r.game && r.game.s.floor === 1 && r.game.s.turn === cpHigh.turn, 'loads checkpoint');
+  ok(JSON.stringify(r.game.s.level.tiles) === JSON.stringify(Game.create('checkpoint').s.level.tiles), 'same layout');
+  ok(playFloor(r.game, 42) === a, 'replayed floor is identical');
+
+  // Stats carry over.
+  const c = Game.fromSave({ ...start, floor: 7, player: { hp: 3, maxHp: 14, str: 4, coins: 55, spells: { noclip: 1, fireball: 2, luck: 0, reroll: 3, invis: 0 } } });
+  const p = c.game.s.player;
+  ok(c.game.s.floor === 7 && p.hp === 3 && p.maxHp === 14 && p.str === 4 && p.coins === 55 && p.spells.reroll === 3 && p.keys.length === 0, 'stats restored');
+  ok(Game.fromSave({ app: 'dice-delve', save: start }).game, 'export wrapper accepted');
+
+  // Shop floors load into the shop.
+  const shop = Game.fromSave({ ...start, floor: 5 });
+  ok(shop.game.s.phase === 'shop', 'shop checkpoint');
+
+  // Older full-snapshot saves convert to a checkpoint.
+  const old = Game.create('legacy');
+  old.s.player.coins = 9;
+  ok(Game.fromSave(JSON.parse(JSON.stringify(old.s))).game.s.player.coins === 9, 'legacy mid-floor save');
+  old.s.phase = 'levelDone';
+  ok(Game.fromSave(JSON.parse(JSON.stringify(old.s))).game.s.floor === 2, 'legacy finished-floor save');
+  old.s.phase = 'dead';
+  ok(Game.fromSave(JSON.parse(JSON.stringify(old.s))).error, 'legacy dead save refused');
+});
+
+test('checkpoint validation', () => {
+  const base = Game.create('valid').s.checkpoint;
   const bad = [
-    (st) => { st.player.x = '<img src=x onerror=alert(1)>'; },
-    (st) => { st.log.push({ text: 'x', kind: 'a" onclick="x' }); },
-    (st) => { st.level.objects.push({ type: 'coin', x: 1, y: 1, color: 'red;background:url(x)' }); },
-    (st) => { st.level.objects.push({ type: 'script', x: 1, y: 1 }); },
-    (st) => { st.player.hp = 99; },
-    (st) => { st.floor = 'ten'; },
-    (st) => { st.version = 2; },
-    (st) => { st.level.tiles.pop(); },
+    (cp) => { cp.player.hp = 99; },
+    (cp) => { cp.player.hp = 0; },
+    (cp) => { cp.player.coins = '<img src=x onerror=alert(1)>'; },
+    (cp) => { cp.player.coins = -5; },
+    (cp) => { cp.floor = 0; },
+    (cp) => { cp.floor = '3'; },
+    (cp) => { delete cp.player.spells.fireball; },
+    (cp) => { cp.player.spells.luck = 1.5; },
+    (cp) => { cp.seedText = 'x'.repeat(500); },
+    (cp) => { cp.seedText = '   '; },
+    (cp) => { cp.v = 99; },
+    (cp) => { cp.stats = { kills: 'lots' }; },
   ];
-  bad.forEach((mut, i) => { const st = clone(); mut(st); ok(Game.validate(st) !== null && Game.load(st) === null, 'tampered save ' + i + ' accepted'); });
-  ok(Game.load(null) === null && Game.load('x') === null, 'junk rejected');
+  bad.forEach((mut, i) => {
+    const cp = JSON.parse(JSON.stringify(base));
+    mut(cp);
+    ok(Game.validateCheckpoint(cp) !== null && Game.fromSave(cp).error, 'tampered checkpoint ' + i + ' accepted');
+  });
+  ok(Game.fromSave(null).error && Game.fromSave('x').error && Game.fromSave([]).error, 'junk rejected');
 });
 
 test('web stops and halves next move', () => {
@@ -351,8 +408,10 @@ test('random play simulation', () => {
       ok(false, 'unexpected phase ' + s.phase);
       break;
     }
-    const why = Game.validate(JSON.parse(JSON.stringify(g.s)));
-    ok(!why, 'saved state fails validation: ' + why);
+    if (g.s.checkpoint) {
+      const why = Game.validateCheckpoint(JSON.parse(JSON.stringify(g.s.checkpoint)));
+      ok(!why || g.s.phase === 'dead', 'checkpoint fails validation: ' + why);
+    }
   }
   console.log(`     (simulated ${floors} floor transitions, ${deaths} deaths)`);
   ok(floors > 50, 'random play makes progress');

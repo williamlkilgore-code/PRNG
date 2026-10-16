@@ -25,10 +25,7 @@
     invis: { name: 'Invisibility', desc: 'Arm for one turn: pass through enemies without encountering them.' },
   };
   const SHOP_POOL = ['maxhp', 'gamble', 'noclip', 'fireball', 'luck', 'reroll', 'invis'];
-  const SHOP_IDS = ['heal', 'str', ...SHOP_POOL];
-  const PHASES = ['roll', 'choose', 'moving', 'redirect', 'levelDone', 'shop', 'dead'];
-  const OBJ_TYPES = ['coin', 'chest', 'heart', 'medpack', 'key', 'lock', 'web', 'enemy', 'portal'];
-  const OBJ_COLORS = ['gold', 'crimson', 'azure', 'emerald', 'violet', 'teal'];
+  const CHECKPOINT_VERSION = 2;
 
   function randomSeedText() {
     const words = ['moss', 'grim', 'ember', 'vault', 'crypt', 'rune', 'bone', 'gloom', 'ash', 'iron', 'wyrm', 'hex'];
@@ -42,9 +39,8 @@
       this.rebuildIndex();
     }
 
-    static create(seedText) {
-      seedText = String(seedText || '').trim() || randomSeedText();
-      const s = {
+    static newState(seedText) {
+      return {
         version: 1,
         seedText,
         seed: hashStr(seedText),
@@ -56,7 +52,7 @@
           keys: [], webbed: false,
           spells: { noclip: 0, fireball: 0, luck: 0, reroll: 0, invis: 0 },
         },
-        diceState: seedFor(seedText, 'dice'),
+        diceState: 0,
         dice: null, steps: 0, parity: null, halved: false,
         usedDirs: [], turnPath: [], move: null,
         armed: { noclip: false, invis: false }, invisUsed: false,
@@ -64,75 +60,78 @@
         log: [],
         stats: { kills: 0, coins: 0, floorsCleared: 0 },
         floorStartTurn: 0,
+        checkpoint: null,
       };
-      const g = new Game(s);
+    }
+
+    static create(seedText) {
+      seedText = String(seedText || '').trim() || randomSeedText();
+      const g = new Game(Game.newState(seedText));
       g.log(`A new descent begins. Seed "${seedText}".`);
       g.enterFloor(1);
       return g;
     }
 
-    // Returns a game, or null if `state` isn't a valid save.
-    static load(state) {
-      if (Game.validate(state)) return null;
-      if (!Array.isArray(state.turnPath)) state.turnPath = [];
-      return new Game(state);
+    /* ---- Saves ----
+     * A save is a checkpoint: the seed, the floor to start, and what carries
+     * between floors. The floor itself (map, items, dice) is rebuilt from the
+     * seed, so loading always starts a floor fresh. */
+    checkpointFor(floor) {
+      const s = this.s, p = s.player;
+      return {
+        v: CHECKPOINT_VERSION,
+        seedText: s.seedText,
+        floor,
+        player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, spells: Object.assign({}, p.spells) },
+        stats: Object.assign({}, s.stats),
+        turn: s.turn,
+      };
     }
 
-    /* Checks a save's shape and value types. Saves can come from files the
-     * player imports, so every value that reaches the page is checked here.
-     * Returns null when valid, otherwise a short reason. */
-    static validate(st) {
-      const int = (v, lo, hi) => Number.isInteger(v) && v >= (lo ?? -Infinity) && v <= (hi ?? Infinity);
+    // Returns null when `cp` is a valid checkpoint, otherwise a short reason.
+    static validateCheckpoint(cp) {
+      const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
       const obj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-      const fail = (why) => why;
-      if (!obj(st)) return fail('not a save file');
-      if (st.version !== 1) return fail('unsupported save version');
-      if (typeof st.seedText !== 'string' || st.seedText.length > 100) return fail('bad seed');
-      if (!int(st.seed, 0, 0xffffffff) || !int(st.diceState, 0, 0xffffffff)) return fail('bad seed');
-      if (!int(st.floor, 1, 100000) || !int(st.turn, 0) || !int(st.floorStartTurn ?? 0, 0)) return fail('bad floor or turn');
-      if (!PHASES.includes(st.phase)) return fail('bad phase');
-
-      const p = st.player;
-      if (!obj(p)) return fail('missing player');
-      if (!int(p.hp, 0) || !int(p.maxHp, 1) || p.hp > p.maxHp || !int(p.str, 0) || !int(p.coins, 0)) return fail('bad player stats');
-      if (!Array.isArray(p.keys) || !p.keys.every((k) => DC.KEY_COLORS.includes(k))) return fail('bad keys');
-      if (!obj(p.spells) || !Object.keys(SPELLS).every((k) => int(p.spells[k], 0))) return fail('bad spells');
-
-      if (st.dice !== null && !(Array.isArray(st.dice) && st.dice.length === 2 && st.dice.every((d) => int(d, 1, 6)))) return fail('bad dice');
-      if (!int(st.steps, 0, 12) || ![null, 'ortho', 'diag'].includes(st.parity ?? null)) return fail('bad roll');
-      if (!Array.isArray(st.usedDirs) || !st.usedDirs.every((d) => d in DIRS)) return fail('bad directions');
-      if (st.move !== null && !(obj(st.move) && st.move.dir in DIRS && int(st.move.stepsLeft, 0, 12))) return fail('bad move');
-      if ((st.phase === 'moving' || st.phase === 'redirect') && !st.move) return fail('bad move');
-      if (!obj(st.armed) || typeof st.armed.noclip !== 'boolean' || typeof st.armed.invis !== 'boolean') return fail('bad spells');
-      if (!Array.isArray(st.log) || !st.log.every((l) => obj(l) && typeof l.text === 'string' && /^[a-z]{1,12}$/.test(l.kind))) return fail('bad journal');
-      if (!obj(st.stats) || !['kills', 'coins', 'floorsCleared'].every((k) => int(st.stats[k], 0))) return fail('bad stats');
-
-      if (st.phase === 'levelDone') {
-        const sm = st.summary;
-        if (!obj(sm) || !int(sm.floor, 1) || !int(sm.turns, 0) || !int(sm.next, 1) || typeof sm.nextIsShop !== 'boolean') return fail('bad summary');
-      }
-      if (st.phase === 'shop') {
-        const sh = st.shop;
-        if (!obj(sh) || !Array.isArray(sh.items) || !sh.items.every((it) => obj(it) && SHOP_IDS.includes(it.id) && typeof it.sold === 'boolean')) return fail('bad shop');
-        const g = sh.lastGamble;
-        if (g != null && !(obj(g) && int(g.roll, 1, 6) && int(g.wager, 1) && int(g.delta) && typeof g.text === 'string')) return fail('bad shop');
-      } else if (st.phase !== 'dead' || st.level) {
-        const L = st.level;
-        if (!obj(L) || !int(L.w, 5, 200) || !int(L.h, 5, 200)) return fail('bad map');
-        const inB = (c) => Array.isArray(c) && c.length === 2 && int(c[0], 0, L.w - 1) && int(c[1], 0, L.h - 1);
-        const at = (o) => obj(o) && int(o.x, 0, L.w - 1) && int(o.y, 0, L.h - 1);
-        if (!Array.isArray(L.tiles) || L.tiles.length !== L.w * L.h || !L.tiles.every((t) => int(t, 0, 2))) return fail('bad map');
-        if (!at(L.start) || !at(L.stairs) || !int(p.x, 0, L.w - 1) || !int(p.y, 0, L.h - 1)) return fail('bad map');
-        if (!Array.isArray(L.objects)) return fail('bad map');
-        const ok = L.objects.every((o) => at(o) && OBJ_TYPES.includes(o.type) &&
-          (o.color === undefined || OBJ_COLORS.includes(o.color)) &&
-          (o.type !== 'enemy' || (int(o.hp) && int(o.maxHp, 1))) &&
-          (o.type !== 'portal' || (int(o.pair, 0, L.objects.length - 1) && L.objects[o.pair].type === 'portal')));
-        if (!ok) return fail('bad map objects');
-        if (!Array.isArray(L.trail) || !L.trail.length || !L.trail.every((seg) => Array.isArray(seg) && seg.length && seg.every(inB))) return fail('bad trail');
-        if (st.turnPath !== undefined && !(Array.isArray(st.turnPath) && st.turnPath.every((i) => int(i, 0, L.w * L.h - 1)))) return fail('bad trail');
-      }
+      if (!obj(cp)) return 'not a save';
+      if (cp.v !== CHECKPOINT_VERSION) return 'unsupported save version';
+      if (typeof cp.seedText !== 'string' || !cp.seedText.trim() || cp.seedText.length > 100) return 'bad seed';
+      if (!int(cp.floor, 1, 100000)) return 'bad floor';
+      const p = cp.player;
+      if (!obj(p) || !int(p.maxHp, 1, 100000) || !int(p.hp, 1, p.maxHp) || !int(p.str, 0, 100000) || !int(p.coins, 0, 1e9)) return 'bad player stats';
+      if (!obj(p.spells) || !Object.keys(SPELLS).every((k) => int(p.spells[k], 0, 10000))) return 'bad spells';
+      if (cp.stats !== undefined && !(obj(cp.stats) && ['kills', 'coins', 'floorsCleared'].every((k) => int(cp.stats[k], 0, 1e9)))) return 'bad stats';
+      if (cp.turn !== undefined && !int(cp.turn, 0, 1e9)) return 'bad turn';
       return null;
+    }
+
+    /* Accepts a checkpoint, an export file ({app, save}), or an older
+     * full-snapshot save, and returns { game } or { error }. */
+    static fromSave(data) {
+      if (data && data.app === 'dice-delve') data = data.save || data.state;
+      let cp = data;
+      if (data && data.version === 1 && data.player) {
+        // Older full-snapshot save: resume at the start of its current floor
+        // (or the next one, if the floor was already finished).
+        if (data.phase === 'dead') return { error: 'that run has ended' };
+        const p = data.player;
+        cp = {
+          v: CHECKPOINT_VERSION, seedText: data.seedText,
+          floor: data.phase === 'levelDone' ? data.floor + 1 : data.floor,
+          player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, spells: p.spells },
+          stats: data.stats, turn: data.turn,
+        };
+      }
+      const why = Game.validateCheckpoint(cp);
+      if (why) return { error: why };
+      const g = new Game(Game.newState(cp.seedText.trim()));
+      const s = g.s, p = s.player;
+      Object.assign(p, { hp: cp.player.hp, maxHp: cp.player.maxHp, str: cp.player.str, coins: cp.player.coins });
+      for (const k of Object.keys(SPELLS)) p.spells[k] = cp.player.spells[k];
+      if (cp.stats) Object.assign(s.stats, { kills: cp.stats.kills, coins: cp.stats.coins, floorsCleared: cp.stats.floorsCleared });
+      s.turn = cp.turn || 0;
+      g.log(`Resumed seed "${s.seedText}" at floor ${cp.floor}.`);
+      g.enterFloor(cp.floor);
+      return { game: g };
     }
 
     // ---------------------------------------------------------------- helpers
@@ -255,6 +254,9 @@
       s.armed = { noclip: false, invis: false }; s.invisUsed = false;
       p.keys = []; p.webbed = false;
       s.floorStartTurn = s.turn;
+      // Dice restart per floor, so a floor replays identically from its checkpoint.
+      s.diceState = seedFor(s.seedText, 'dice', f);
+      s.checkpoint = this.checkpointFor(f);
       if (R.isShopFloor(s.seed, f)) {
         s.level = null;
         s.shop = this.makeShop(f);
@@ -277,6 +279,7 @@
       s.stats.floorsCleared++;
       s.phase = 'levelDone';
       s.summary = { floor: s.floor, turns: s.turn - s.floorStartTurn, next: s.floor + 1, nextIsShop: R.isShopFloor(s.seed, s.floor + 1) };
+      s.checkpoint = this.checkpointFor(s.floor + 1);
       this.log(`You descend the stairs of floor ${s.floor}!`, 'good');
     }
 

@@ -240,6 +240,7 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 .btn.danger { background: var(--bad); color: #fff; }
 .save-row { display: flex; gap: 8px; }
 .save-row input { flex: 1; min-width: 0; }
+.save-row + .save-row { margin-top: 8px; }
 .notice { border: 2px dashed var(--good); border-radius: 8px; padding: 6px 10px; color: var(--good); }
 .notice.bad { border-color: var(--bad); color: var(--bad); }
 

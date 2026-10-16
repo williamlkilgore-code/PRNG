@@ -27,7 +27,13 @@
     set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
     del(k) { try { localStorage.removeItem(k); } catch (e) { /* storage unavailable */ } },
   };
-  const save = () => { if (game) store.set(SAVE_KEY, JSON.stringify(game.s)); };
+  // Auto-save writes the checkpoint, which only changes when a floor starts or is finished.
+  let lastSaved = null;
+  const save = () => {
+    if (!game || game.s.phase === 'dead' || !game.s.checkpoint) return;
+    const text = JSON.stringify(game.s.checkpoint);
+    if (text !== lastSaved && store.set(SAVE_KEY, text)) lastSaved = text;
+  };
   const sleep = (ms) => new Promise((r) => setTimeout(r, reducedMotion ? Math.min(ms, 40) : ms));
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -173,7 +179,7 @@
   function afterPhase() {
     const ph = game.s.phase;
     if (ph === 'levelDone') { recordBest(); setTimeout(showLevelDone, reducedMotion ? 0 : 350); }
-    else if (ph === 'dead') { recordBest(); store.del(SAVE_KEY); setTimeout(showDead, reducedMotion ? 0 : 500); }
+    else if (ph === 'dead') { recordBest(); store.del(SAVE_KEY); lastSaved = null; setTimeout(showDead, reducedMotion ? 0 : 500); }
     else if (ph === 'shop') showShop();
   }
 
@@ -271,7 +277,9 @@
   });
 
   function showStart(fromMenu) {
-    const saved = store.get(SAVE_KEY);
+    const savedLoad = Game.fromSave(parseJson(store.get(SAVE_KEY)));
+    const saved = savedLoad.game ? store.get(SAVE_KEY) : null;
+    const savedFloor = savedLoad.game ? savedLoad.game.s.floor : 0;
     const b = best();
     openModal(`
       <h2>Dice Delve</h2>
@@ -281,7 +289,7 @@
       <h3>Seed</h3>
       <input type="text" id="seedInput" placeholder="Leave blank for a random dungeon" maxlength="40" autocomplete="off">
       <div class="row">
-        ${saved && !fromMenu ? '<button class="btn primary" id="continueBtn" type="button">Continue</button>' : ''}
+        ${saved && !fromMenu ? `<button class="btn primary" id="continueBtn" type="button">Continue (floor ${savedFloor})</button>` : ''}
         <button class="btn ${saved && !fromMenu ? '' : 'primary'}" id="newBtn" type="button">New game</button>
         <button class="btn" id="loadBtn" type="button">Load game</button>
         <button class="btn" id="rulesBtn" type="button">Rules</button>
@@ -289,8 +297,8 @@
       </div>`, !!(fromMenu && game));
     const cont = $('#continueBtn');
     if (cont) cont.addEventListener('click', () => {
-      const g = Game.load(parseJson(saved));
-      if (g) { startWith(g); } else { store.del(SAVE_KEY); showStart(); }
+      const r = Game.fromSave(parseJson(store.get(SAVE_KEY)));
+      if (r.game) { startWith(r.game); } else { store.del(SAVE_KEY); showStart(); }
     });
     $('#loadBtn').addEventListener('click', () => showSaves(() => showStart(fromMenu)));
     $('#newBtn').addEventListener('click', () => startWith(Game.create($('#seedInput').value)));
@@ -304,48 +312,72 @@
     closeModal();
     render();
     save();
-    if (game.s.phase === 'moving') runMove();
-    else afterPhase();
+    afterPhase();
   }
 
   // --------------------------------------------------------------- save slots
+  /* Every save (auto-save, slots, files, codes) is a checkpoint: the seed,
+   * the floor to start, and what carries between floors. Progress inside a
+   * floor isn't saved; loading starts that floor fresh. */
   function parseJson(text) { try { return JSON.parse(text); } catch (e) { return null; } }
   function readSlots() {
     const list = parseJson(store.get(SLOTS_KEY) || '[]');
-    return Array.isArray(list) ? list.filter((sl) => sl && typeof sl.id === 'string' && sl.state) : [];
+    return Array.isArray(list) ? list.filter((sl) => sl && typeof sl.id === 'string' && (sl.save || sl.state)) : [];
   }
   const writeSlots = (list) => store.set(SLOTS_KEY, JSON.stringify(list));
-  const canSaveNow = () => game && !ui.busy && game.s.phase !== 'dead' && game.s.phase !== 'moving';
-  const defaultName = () => `Floor ${game.s.floor} · ${game.s.seedText}`;
-  const slotMeta = (st) => ({ floor: st.floor, hp: st.player.hp, maxHp: st.player.maxHp, coins: st.player.coins, seedText: st.seedText });
+  const checkpoint = () => (game && game.s.phase !== 'dead' ? game.s.checkpoint : null);
+  const defaultName = () => `Floor ${checkpoint().floor} · ${game.s.seedText}`;
   const when = (t) => { try { return new Date(t).toLocaleString(); } catch (e) { return ''; } };
+  const CODE_PREFIX = 'DD2.';
+  function encodeCode(cp) {
+    const bytes = new TextEncoder().encode(JSON.stringify(cp));
+    let bin = '';
+    bytes.forEach((b) => { bin += String.fromCharCode(b); });
+    return CODE_PREFIX + btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function decodeCode(code) {
+    try {
+      code = code.trim();
+      if (!code.startsWith(CODE_PREFIX)) return null;
+      const bin = atob(code.slice(CODE_PREFIX.length).replace(/-/g, '+').replace(/_/g, '/'));
+      return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+    } catch (e) { return null; }
+  }
 
   function showSaves(back, message) {
     const slots = readSlots().sort((a, b) => b.savedAt - a.savedAt);
-    const canSave = canSaveNow();
+    const cp = checkpoint();
+    const midFloor = cp && game.s.phase !== 'levelDone' && cp.floor === game.s.floor && game.s.turn > game.s.floorStartTurn;
     const rows = slots.map((sl) => {
       const m = sl.meta || {};
       return `<li class="slot">
         <div class="slot-info"><span class="slot-name">${esc(String(sl.name || 'Save'))}</span>
-          <span class="muted">Floor ${esc(String(m.floor))} · ${esc(String(m.hp))}/${esc(String(m.maxHp))} hp · ${esc(String(m.coins))} coins · ${esc(when(sl.savedAt))}</span></div>
+          <span class="muted">Start of floor ${esc(String(m.floor))} · ${esc(String(m.hp))}/${esc(String(m.maxHp))} hp · ${esc(String(m.coins))} coins · ${esc(when(sl.savedAt))}</span></div>
         <div class="slot-actions">
           <button class="btn" type="button" data-slot-load="${esc(sl.id)}">Load</button>
-          ${canSave ? `<button class="btn" type="button" data-slot-over="${esc(sl.id)}">Overwrite</button>` : ''}
+          ${cp ? `<button class="btn" type="button" data-slot-over="${esc(sl.id)}">Overwrite</button>` : ''}
           <button class="btn" type="button" data-slot-del="${esc(sl.id)}">Delete</button>
         </div></li>`;
     }).join('');
     openModal(`
       <h2>Saved games</h2>
       ${message ? `<p class="notice ${message.bad ? 'bad' : ''}">${esc(message.text)}</p>` : ''}
-      ${canSave ? `<h3>Save this game</h3>
+      <p class="muted">Saves record the start of a floor. Your game also saves automatically each time you reach a new floor.</p>
+      ${cp ? `<h3>Save this game</h3>
+        ${midFloor ? `<p class="muted">This saves the start of floor ${cp.floor}. Progress on this floor so far isn't included.</p>` : ''}
         <div class="save-row"><input type="text" id="slotName" maxlength="40" value="${esc(defaultName())}" aria-label="Save name">
         <button class="btn primary" type="button" id="slotSave">Save</button></div>` : ''}
       <h3>Save slots <span class="muted">(${slots.length}/${MAX_SLOTS}, stored in this browser)</span></h3>
       ${rows ? `<ul class="slots">${rows}</ul>` : '<p class="muted">No saved games yet.</p>'}
+      <h3>Save code</h3>
+      <p class="muted">A short code you can copy somewhere safe or paste on another device.</p>
+      ${cp ? `<div class="save-row"><input type="text" id="codeOut" readonly value="${esc(encodeCode(cp))}" aria-label="Save code for this game">
+        <button class="btn" type="button" id="codeCopy">Copy</button></div>` : ''}
+      <div class="save-row"><input type="text" id="codeIn" placeholder="Paste a save code" aria-label="Paste a save code" autocomplete="off">
+        <button class="btn" type="button" id="codeLoad">Load</button></div>
       <h3>Save file</h3>
-      <p class="muted">Download a save file to back it up or move it to another browser or device.</p>
       <div class="row">
-        ${game && game.s.phase !== 'dead' ? '<button class="btn" type="button" id="exportBtn">Export current game</button>' : ''}
+        ${cp ? '<button class="btn" type="button" id="exportBtn">Export current game</button>' : ''}
         <button class="btn" type="button" id="importBtn">Import save file</button>
         <input type="file" id="importFile" accept=".json,application/json" hidden>
       </div>
@@ -353,27 +385,41 @@
 
     const body = $('#modalBody');
     const again = (text, bad) => showSaves(back, { text, bad });
+    const loadOrComplain = (data, what) => {
+      const r = Game.fromSave(data);
+      if (r.game) startWith(r.game);
+      else again(`That ${what} isn't a valid Dice Delve save (${r.error}).`, true);
+    };
     $('#savesBack').addEventListener('click', () => (back ? back() : closeModal()));
 
     const saveTo = (id, name) => {
       const list = readSlots();
       const i = list.findIndex((sl) => sl.id === id);
       if (i < 0 && list.length >= MAX_SLOTS) return again(`All ${MAX_SLOTS} slots are full. Overwrite or delete one first.`, true);
-      const entry = { id, name, savedAt: Date.now(), meta: slotMeta(game.s), state: JSON.parse(JSON.stringify(game.s)) };
+      const c = checkpoint();
+      const entry = { id, name, savedAt: Date.now(), meta: { floor: c.floor, hp: c.player.hp, maxHp: c.player.maxHp, coins: c.player.coins }, save: c };
       if (i >= 0) list[i] = entry; else list.push(entry);
-      if (!writeSlots(list)) return again('Could not save: browser storage is full or blocked. Use Export instead.', true);
+      if (!writeSlots(list)) return again('Could not save: browser storage is full or blocked. Use a save code or file instead.', true);
       again(`Saved "${name}".`);
     };
-    if (canSave) {
+    if (cp) {
       const doSave = () => saveTo(`s${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`,
         $('#slotName').value.trim() || defaultName());
       $('#slotSave').addEventListener('click', doSave);
       $('#slotName').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); });
+      $('#codeCopy').addEventListener('click', async () => {
+        const out = $('#codeOut');
+        out.select();
+        let copied = false;
+        try { await navigator.clipboard.writeText(out.value); copied = true; } catch (e) {
+          try { copied = document.execCommand('copy'); } catch (e2) { copied = false; }
+        }
+        $('#codeCopy').textContent = copied ? 'Copied' : 'Select & copy';
+      });
     }
     body.querySelectorAll('[data-slot-load]').forEach((b) => b.addEventListener('click', () => {
       const sl = readSlots().find((x) => x.id === b.dataset.slotLoad);
-      const g = sl && Game.load(JSON.parse(JSON.stringify(sl.state)));
-      if (g) startWith(g); else again('That save is damaged and could not be loaded.', true);
+      if (sl) loadOrComplain(sl.save || sl.state, 'slot');
     }));
     body.querySelectorAll('[data-slot-over]').forEach((b) => b.addEventListener('click', () => {
       const sl = readSlots().find((x) => x.id === b.dataset.slotOver);
@@ -384,14 +430,22 @@
       writeSlots(readSlots().filter((x) => x.id !== b.dataset.slotDel));
       again('Save deleted.');
     }));
+    const codeLoad = () => {
+      const data = decodeCode($('#codeIn').value);
+      if (!data) return again("That doesn't look like a save code. Codes start with " + CODE_PREFIX, true);
+      loadOrComplain(data, 'code');
+    };
+    $('#codeLoad').addEventListener('click', codeLoad);
+    $('#codeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') codeLoad(); });
 
     const exp = $('#exportBtn');
     if (exp) exp.addEventListener('click', () => {
-      const file = { app: 'dice-delve', version: 1, savedAt: new Date().toISOString(), state: game.s };
-      const blob = new Blob([JSON.stringify(file)], { type: 'application/json' });
+      const c = checkpoint();
+      const file = { app: 'dice-delve', savedAt: new Date().toISOString(), save: c };
+      const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `dice-delve-floor-${game.s.floor}-${game.s.seedText.replace(/[^a-z0-9-]+/gi, '_')}.json`;
+      a.download = `dice-delve-floor-${c.floor}-${c.seedText.replace(/[^a-z0-9-]+/gi, '_')}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -404,13 +458,7 @@
       if (!f) return;
       if (f.size > 2e6) return again('That file is too large to be a save file.', true);
       const reader = new FileReader();
-      reader.onload = () => {
-        const data = parseJson(String(reader.result));
-        const state = data && data.app === 'dice-delve' ? data.state : data;
-        const why = Game.validate(state);
-        if (why) return again(`That file isn't a valid Dice Delve save (${why}).`, true);
-        startWith(Game.load(state));
-      };
+      reader.onload = () => loadOrComplain(parseJson(String(reader.result)), 'file');
       reader.onerror = () => again('Could not read that file.', true);
       reader.readAsText(f);
     });
@@ -451,7 +499,7 @@
       <h3>Controls</h3>
       <p class="muted">Tap the arrows on the map or the direction pad. Space/Enter: roll · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too.</p>
       <h3>Saving</h3>
-      <p>Your game auto-saves after every move, so Continue picks up where you left off. Use <b>Saves</b> to keep named saves in this browser, or to export a save file and import it on another device.</p>
+      <p>The game saves a checkpoint each time you reach a new floor. A checkpoint holds your seed, the floor, your stats, coins and spells. The floor itself is rebuilt from the seed, so loading always restarts that floor from its beginning (same layout, same dice). Progress inside a floor isn't saved. Use <b>Saves</b> for named save slots, a copyable save code, or a save file.</p>
       <div class="row"><button class="btn primary" type="button" id="helpClose">Got it</button></div>`, !back);
     $('#helpClose').addEventListener('click', () => (back ? back() : closeModal()));
   }
@@ -601,7 +649,7 @@
     setupInput();
     const saved = store.get(SAVE_KEY);
     let g = null;
-    g = saved ? Game.load(parseJson(saved)) : null;
+    g = saved ? Game.fromSave(parseJson(saved)).game || null : null;
     if (g) {
       game = g;
       render();

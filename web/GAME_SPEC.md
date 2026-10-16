@@ -19,7 +19,7 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
   - The scripts are classic scripts, not ES modules, so `index.html` also works when opened from `file://`.
 - **Graphics:** everything is SVG. Inline symbols are styled through CSS custom properties, so light and dark themes both work. No raster images are used.
 - **Determinism:** a text seed decides every floor layout, item, shop and die roll. The only use of `Math.random` is choosing a random seed name when the player leaves the seed blank.
-- **Persistence:** the whole game state is plain JSON, saved to `localStorage` after every action.
+- **Persistence:** checkpoint saves. A save holds only the seed, the floor to start, and what carries between floors (about 250 bytes). The floor is rebuilt from the seed, so loading always restarts that floor from its beginning. See section 6.5.
 - **Length:** floors go on forever. There is no win condition. The game records the deepest floor reached.
 
 ### Running and testing
@@ -229,9 +229,9 @@ This lets the same files run in the browser and under Node (`require` puts them 
 | Floor layout | `seedFor(seed, 'floor', f)` | `generateLevel` |
 | Shop schedule | `seedFor(seed, 'shops')` | `rules.shopSchedule` (cached per seed) |
 | Shop stock | `seedFor(seed, 'shop', f)` | `Game.makeShop` |
-| Dice | `seedFor(seedText, 'dice')` | Every in-game die: movement, chest d6, med pack d4, Re-roll, Gamble. Its state is saved in `state.diceState`. |
+| Dice | `seedFor(seedText, 'dice', f)`, reset on entering each floor | Every in-game die: movement, chest d6, med pack d4, Re-roll, Gamble. The current state is `state.diceState`. |
 
-`seed` is `hashStr(seedText)`. The dice stream is built from `seedText`, not from `seed`. It must stay that way, or old saves will roll different dice.
+`seed` is `hashStr(seedText)`. The dice stream restarts at each floor, so a floor loaded from its checkpoint replays identically when the player makes the same choices. This "retry" is accepted by design.
 
 ### 4.2 Room layout (binary space partition)
 
@@ -335,11 +335,11 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
 
 ---
 
-## 5. Data model (`game.s`, which is saved as-is)
+## 5. Data model (`game.s`, the in-memory state)
 
 ```js
 {
-  version: 1,                 // bump when the shape changes; Game.load rejects other versions
+  version: 1,                 // in-memory shape; only checkpoints are saved (section 6.5)
   seedText: 'moss-rune-42', seed: <uint32>,
   floor: 1, turn: 0, floorStartTurn: 0,
   phase: 'roll',              // see 4.5
@@ -354,6 +354,7 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   level: Level | null,        // null on shop floors
   shop: { floor, items: [{ id, sold }], lastGamble } | null,
   log: [{ text, kind, turn }],// newest last, capped at 60
+  checkpoint: Checkpoint,     // what gets saved: start of this floor, or of the next once finished
   stats: { kills, coins, floorsCleared },
   summary: { floor, turns, next, nextIsShop }   // set on levelDone
 }
@@ -426,6 +427,44 @@ Journal entries use the classes `log-<kind>`. Don't use a bare `<kind>`: the `sp
 
 ---
 
+## 6.5 Saves (checkpoints)
+
+Everything about a floor (layout, items, enemies, shop stock, dice) comes from the seed and the floor number. So a save stores only what carries between floors:
+
+```js
+// Checkpoint (CHECKPOINT_VERSION = 2)
+{
+  v: 2,
+  seedText: 'moss-rune-42',
+  floor: 7,                                   // the floor to start
+  player: { hp, maxHp, str, coins, spells: { noclip, fireball, luck, reroll, invis } },
+  stats: { kills, coins, floorsCleared },     // optional; score screen only
+  turn: 123                                   // optional; turn counter
+}
+```
+
+**API in `game.js`:**
+
+| Call | What it does |
+|---|---|
+| `game.checkpointFor(floor)` | Builds a checkpoint from the current stats |
+| `enterFloor(f)` | Sets `s.checkpoint = checkpointFor(f)` and resets the dice to `seedFor(seedText, 'dice', f)` |
+| `completeFloor()` | Sets `s.checkpoint = checkpointFor(floor + 1)`, so a save made on the "floor cleared" screen resumes on the next floor |
+| `Game.validateCheckpoint(cp)` | Returns `null` if valid, otherwise a short reason. Every field is type- and range-checked (`hp` from 1 to `maxHp`, all five spells present, and so on). |
+| `Game.fromSave(data)` | Returns `{ game }` or `{ error }` |
+
+`Game.fromSave` accepts three kinds of input:
+- a bare checkpoint;
+- an export wrapper (`{app: 'dice-delve', save}`);
+- an older version-1 full-snapshot save. That is converted to a checkpoint for its current floor, or the next floor if it was finished. A dead run is refused.
+
+**Rules for saves:**
+- **Progress inside a floor is never saved.** Loading starts the floor fresh, with the stats the player had when they entered it.
+- **Retrying is accepted.** A reloaded floor has the same layout and the same dice. On a shop floor, reloading undoes purchases along with the coins spent.
+- **Generator changes are safe.** If a code update changes how floors are generated, an old save simply gets a new (valid) floor at the start, so a player can never be placed inside a wall.
+- **Spoofing.** Saves are plain JSON on the player's machine and can be edited (for example, coins). Validation stops malformed or malicious data, not cheating. It's a single-player game, so this is accepted.
+- **When something new carries between floors** (for example a new spell, or a new stat): add it to `checkpointFor`, `validateCheckpoint` and `fromSave`. If an old checkpoint can't be read the same way any more, bump `CHECKPOINT_VERSION`. For an addition, give old saves a default value instead.
+
 ## 7. UI layer (`ui.js`)
 
 - **Saving.** `render()` draws the HUD, the board and the side panel from `game.s`. After every state change, call `render(); save();`.
@@ -441,14 +480,15 @@ Journal entries use the classes `log-<kind>`. Don't use a bare `<kind>`: the `sp
   - Arrow keys or WASD: orthogonal moves. Q, E, Z, C: diagonal moves.
   - Number pad: 8, 2, 4, 6 for orthogonal and 7, 9, 1, 3 for diagonal.
   - Esc: cancel Fireball targeting or close a modal.
-- **Saving.**
-  - Auto-save: the whole `game.s` is written after every action.
-  - **Saves** menu (`showSaves`): up to 12 named slots in the browser, each storing `{id, name, savedAt, meta, state}`. It has Save, Load, Overwrite and Delete (Delete asks to confirm). Saving is disabled while moving or after death.
-  - Export downloads `{app: 'dice-delve', version: 1, savedAt, state}` as `.json`. Import accepts that wrapper or a bare state.
-  - Every load (auto-save, slot or file) goes through `Game.load`, which calls `Game.validate(state)`. `validate` checks every field's type and range, including enums for phases, object types, colors and journal kinds. Values from a save end up in the page's HTML, so a file that fails validation is refused with a reason.
-  - When a state is changed in a new way, extend `Game.validate` to match, or valid saves will be refused.
+- **Saving** (details in section 6.5).
+  - Auto-save writes `game.s.checkpoint` to `localStorage` whenever it changes, which happens when a floor starts or is finished. It is deleted when the player dies.
+  - **Saves** menu (`showSaves`):
+    - Up to 12 named slots in the browser, each `{id, name, savedAt, meta, save: Checkpoint}`. It has Save, Load, Overwrite and Delete (Delete asks to confirm).
+    - A **save code**: `DD2.` followed by the checkpoint JSON in base64url. Copy and paste.
+    - **Export** downloads `{app: 'dice-delve', savedAt, save: Checkpoint}` as `.json`. **Import** loads one.
+  - Every load (auto-save, slot, code or file) goes through `Game.fromSave`.
 - **Storage keys.**
-  - `dicedelve-save-v1`: the game state. Deleted when the player dies.
+  - `dicedelve-save-v1`: the auto-save checkpoint. Deleted when the player dies. (The key name predates checkpoints.)
   - `dicedelve-slots-v1`: the save slots.
   - `dicedelve-best-v1`: the deepest floor reached.
   - `dicedelve-theme`
@@ -466,6 +506,7 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
 - **Level invariants** for floors 1–80 on 6 seeds: room size ≥ 3×3, closed border, object placement, lock walls on opposite sides, one key per lock, keys reachable with all locks closed, full connectivity, stairs reachable, portal pairing and lock zones, obstacles present.
 - **Determinism:** the same seed gives the same level.
 - **Scripted scenarios** on small hand-made maps (`sandbox([...rows])`, where `#` is wall, `D` is doorway, `@` is start and `>` is stairs). They cover parity, sliding, redirect and no doubling back, webs, combat, keys and locks, portals, every spell, and the shop and gamble payouts.
+- **Saves:** a checkpoint round-trips; a reloaded floor replays identically with the same choices; stats carry over; shop checkpoints open the shop; older saves convert; tampered checkpoints are rejected.
 - **Random play:** 25 simulated games choosing random legal moves (with huge health) for 30 floors or 4,000 actions. It checks that the player never ends up inside a wall, that the game never loops forever, and that the phases are always valid.
 
 Run it after **every** change. For UI changes, also open the page and play a few turns, checking both themes and a phone-width (about 390 px) window.
@@ -501,7 +542,7 @@ Update the matching rows in section 2 of this file and any boundary values in th
    - Add it to `SHOP_POOL`.
    - Add a `canCast` case saying which phases allow it.
    - Write the method that applies it. It should spend the charge and log the result.
-   - Because the saved state's shape changes, bump `version`, or add a migration in `Game.load` that fills in the missing count.
+   - Spell counts carry between floors, so add the spell to `Game.validateCheckpoint` (and to `fromSave`, defaulting to 0 for older saves). See 6.5.
 2. **`render.js`:** add an icon `i-sp-<id>`.
 3. **`ui.js`:** add the id to `SPELL_ORDER`. Add a branch in `castSpell` (and a modal if it needs input). Check the spell grid's column count in CSS (`.spells`, currently 5).
 4. Add a test in the `spells` scenario.
