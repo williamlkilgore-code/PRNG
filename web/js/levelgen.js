@@ -221,17 +221,18 @@
     place('chest', rng.int(floor < 3 ? 0 : 1, 1 + Math.min(2, Math.floor(floor / 10))), allFloor);
     place('heart', rng.int(1, 2), allFloor);
     place('medpack', floor >= 3 ? rng.int(0, 1) : 0, allFloor);
-    place('web', Math.min(10, 1 + Math.floor(floor / 3) + rng.int(0, 1)), awayFromStart);
+    place('web', Math.min(6, 1 + Math.floor(floor / 3) + rng.int(0, 1)), awayFromStart);
     const hp = R.enemyHealth(floor);
-    place('enemy', Math.min(14, 1 + Math.floor(floor / 3) + rng.int(0, 1)), awayFromStart, () => ({ hp, maxHp: hp }));
+    place('enemy', Math.min(8, 1 + Math.floor(floor / 3) + rng.int(0, 1)), awayFromStart, () => ({ hp, maxHp: hp }));
 
     return L;
   }
 
   function generateLevel(seed, floor) {
     const rng = new RNG(seedFor(seed, 'floor', floor));
-    const w = 17 + 2 * Math.min(7, Math.floor((floor - 1) / 3));
-    const h = 13 + 2 * Math.min(5, Math.floor((floor - 1) / 4));
+    // Floors grow from 17x13 up to a cap of 21x15 (fits phone screens).
+    const w = 17 + 2 * Math.min(2, Math.floor((floor - 1) / 3));
+    const h = 13 + 2 * Math.min(1, Math.floor((floor - 1) / 4));
     for (let attempt = 0; attempt < 50; attempt++) {
       const L = tryGenerate(rng, floor, w, h);
       if (L) { L.floor = floor; return L; }

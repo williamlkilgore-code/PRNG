@@ -63,37 +63,64 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 
 /* ---------------------------------------------------------------- header */
 .hud {
-  display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap;
-  padding: 10px 16px; border-bottom: 2px solid var(--ink); background: var(--card);
+  display: flex; align-items: center; gap: 8px 16px; position: relative; z-index: 5;
+  padding: 8px 16px; border-bottom: 2px solid var(--ink); background: var(--card);
 }
-.brand { margin: 0; font-size: 28px; letter-spacing: .5px; }
-.stats { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; flex: 1; }
+.brand { margin: 0; font-size: 26px; letter-spacing: .5px; white-space: nowrap; }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; flex: 1; min-width: 0; }
 .stat { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .stat .icon { width: 24px; height: 24px; }
 .stat b { font-weight: normal; font-size: 20px; }
 .hpbar { display: inline-block; width: 90px; height: 12px; border: 2px solid var(--ink); border-radius: 7px; overflow: hidden; vertical-align: middle; }
 .hpbar span { display: block; height: 100%; background: var(--bad); transition: width .25s; }
-.menu { display: flex; gap: 6px; }
-.ghost-btn { background: none; border: 2px solid var(--ink); border-radius: 8px; padding: 2px 10px; cursor: pointer; min-height: 36px; }
+.menu { display: flex; gap: 6px; align-items: center; position: relative; }
+.menu-items { display: flex; gap: 6px; }
+.ghost-btn.menu-toggle { display: none; }
+.ghost-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: none;
+  border: 2px solid var(--ink); border-radius: 8px; padding: 2px 10px; cursor: pointer; min-height: 40px; min-width: 40px;
+}
 .ghost-btn:hover { background: var(--paper); }
-.ghost-btn svg { width: 18px; height: 18px; vertical-align: -3px; }
+.ghost-btn svg { width: 18px; height: 18px; flex: none; }
+#themeBtn .label { display: none; }
+.unread {
+  background: var(--bad); color: #fff; border-radius: 10px; min-width: 20px; height: 20px;
+  font-size: 13px; line-height: 20px; text-align: center; padding: 0 5px;
+}
+.unread[hidden] { display: none; }
 
 /* ---------------------------------------------------------------- layout */
+body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
 .layout {
-  display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px;
-  padding: 16px; max-width: 1400px; margin: 0 auto;
+  flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px;
+  padding: 16px; width: 100%; max-width: 1400px; margin: 0 auto;
 }
 .board-wrap {
-  background: var(--paper); border: 2px solid var(--ink); border-radius: 10px; box-shadow: var(--shadow);
-  padding: 8px; display: flex; align-items: center; justify-content: center; min-width: 0;
+  position: relative; cursor: pointer; background: var(--paper); border: 2px solid var(--ink); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 8px; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0;
 }
-#board { width: 100%; height: auto; max-height: calc(100vh - 110px); display: block; touch-action: manipulation; }
+#board { width: 100%; height: auto; max-height: calc(100vh - 110px); max-height: calc(100dvh - 110px); display: block; touch-action: manipulation; cursor: pointer; }
+#board.nudge .arrow circle { animation: nudge .5s ease-in-out 2; }
+@keyframes nudge { 50% { transform: scale(1.35); } }
 
-.panel { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.toast {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 24px); z-index: 2;
+  background: var(--card); border: 2px solid currentColor; border-radius: 10px; padding: 5px 12px;
+  box-shadow: var(--shadow); font-size: 17px; pointer-events: none; color: var(--ink); text-align: center;
+  animation: toast-in .2s ease-out;
+}
+.toast[hidden] { display: none; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }
+.toast.log-good { color: var(--good); } .toast.log-bad, .toast.log-fight { color: var(--bad); }
+.toast.log-warn { color: var(--warn); } .toast.log-spell { color: var(--spell); }
+
+.controls {
+  display: flex; flex-direction: column; gap: 12px; min-width: 0; align-self: start;
+  background: var(--card); border: 2px solid var(--ink); border-radius: 10px; padding: 12px; box-shadow: var(--shadow);
+}
 .card { background: var(--card); border: 2px solid var(--ink); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); }
-.card-title { margin: 0 0 6px; font-size: 18px; font-weight: normal; color: var(--muted); }
 
-.dice-card { display: flex; align-items: center; gap: 12px; }
+.dice-box { display: flex; align-items: center; gap: 12px; }
 .dice { display: flex; gap: 8px; }
 .die { width: 58px; height: 58px; }
 .die .die-face { fill: var(--die); stroke: #2b2a33; stroke-width: 5; }
@@ -101,13 +128,12 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 .die .die-q { font-family: var(--font); font-size: 56px; text-anchor: middle; fill: #8f8a7c; }
 .die.rolling { animation: tumble .35s ease-out; }
 @keyframes tumble { 0% { transform: rotate(-25deg) scale(.8); } 60% { transform: rotate(10deg) scale(1.05); } 100% { transform: none; } }
-.dice-info { font-size: 18px; }
+.dice-info { font-size: 18px; line-height: 1.2; }
 .dice-info .big { font-size: 30px; display: block; line-height: 1; }
 .dice-info .tag { display: inline-block; border: 1.5px solid currentColor; border-radius: 6px; padding: 0 6px; font-size: 15px; margin-top: 3px; }
 .tag.halved { color: var(--warn); }
 
-.status { margin: 0; min-height: 2.6em; font-size: 19px; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.status { margin: 0; min-height: 2.6em; font-size: 18px; }
 .btn {
   border: 2px solid var(--ink); background: var(--card); border-radius: 10px; padding: 8px 14px;
   cursor: pointer; box-shadow: var(--shadow); min-height: 44px; font-size: 19px;
@@ -116,17 +142,21 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 .btn:hover:not(:disabled) { transform: translateY(-1px); }
 .btn:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.actions .btn { flex: 1; }
 
 .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; max-width: 220px; align-self: center; width: 100%; }
 .pad button {
   aspect-ratio: 1; border: 2px solid var(--ink); background: var(--card); border-radius: 10px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0;
+  display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0; color: var(--ink);
 }
 .pad button svg { width: 60%; height: 60%; }
 .pad button:disabled { opacity: .25; cursor: default; }
-.pad button:not(:disabled) { background: var(--accent); color: #fff; }
-.pad .pad-center { border-style: dashed; background: none; font-size: 22px; color: var(--ink); }
+.pad button[data-dir]:not(:disabled) { background: var(--accent); color: #fff; }
+.pad .pad-center { border-style: dashed; background: none; font-size: 24px; flex-direction: column; gap: 0; line-height: 1; }
+.pad .pad-center:disabled { opacity: 1; }
+.pad .pad-center.roll, .pad .pad-center.pass { border-style: solid; background: var(--good); color: #fff; box-shadow: var(--shadow); font-size: 15px; }
+.pad .pad-center.pass { background: var(--warn); }
+.pad .pad-center.roll svg { width: 55%; height: 55%; }
+.pad .pad-center small { font-size: 12px; color: var(--muted); }
 
 .spells { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 .spell {
@@ -143,10 +173,8 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 .spell.armed { background: var(--spell); color: #fff; box-shadow: 0 0 0 3px var(--card), 0 0 0 5px var(--spell); }
 .spell.empty .count { background: var(--muted); }
 
-.log-card { flex: 1; min-height: 0; }
-.log { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; font-size: 16px; }
-.log li { padding: 3px 0; border-bottom: 1px dashed var(--line); }
-.log li:first-child { font-size: 17px; }
+.log { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; font-size: 17px; }
+.log li { padding: 4px 0; border-bottom: 1px dashed var(--line); }
 .log .log-good { color: var(--good); } .log .log-bad, .log .log-fight { color: var(--bad); }
 .log .log-warn { color: var(--warn); } .log .log-spell { color: var(--spell); }
 .log .log-floor, .log .log-shop { font-weight: bold; }
@@ -245,14 +273,68 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 .notice.bad { border-color: var(--bad); color: var(--bad); }
 
 /* ---------------------------------------------------------------- mobile */
-@media (max-width: 860px) {
-  .layout { grid-template-columns: 1fr; padding: 10px 16px; gap: 10px; }
-  #board { max-height: 62vh; }
-  .brand { font-size: 22px; }
-  .hud { padding: 8px 16px; }
-  .panel { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .dice-card, .status, .actions, .log-card, .panel > .card:not(.dice-card) { grid-column: 1 / -1; }
-  .pad { grid-column: 1 / -1; max-width: 200px; }
+/* Narrow or short screens: compact header with a menu button. */
+@media (max-width: 860px), (max-height: 560px) {
+  .brand, .stat-turn, #journalBtn .label { display: none; }
+  .hud { padding: 6px 12px; gap: 8px; }
+  .stats { gap: 2px 10px; }
+  .stat b { font-size: 18px; }
+  .stat .icon { width: 20px; height: 20px; }
+  .ghost-btn.menu-toggle { display: inline-flex; }
+  .menu-items {
+    display: none; position: absolute; right: 0; top: calc(100% + 8px); flex-direction: column; z-index: 20;
+    background: var(--card); border: 2px solid var(--ink); border-radius: 10px; padding: 8px; min-width: 160px; box-shadow: var(--shadow);
+  }
+  .menu-items.open { display: flex; }
+  .menu-items .ghost-btn { justify-content: flex-start; min-height: 44px; }
+  #themeBtn .label { display: inline; }
+}
+
+/* Phone portrait: map fills the screen, controls docked at the bottom. */
+@media (max-width: 860px) and (orientation: portrait) {
+  .layout { display: flex; flex-direction: column; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); gap: 8px; }
+  .board-wrap { flex: 1 1 auto; min-height: 200px; padding: 4px; }
+  #board { width: 100%; height: 100%; max-height: none; }
+  .controls {
+    align-self: stretch; padding: 10px; gap: 8px 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "dice pad" "status pad" "spells spells";
+  }
+  .dice-box { grid-area: dice; gap: 8px; }
+  .die { width: 42px; height: 42px; }
+  .dice { gap: 6px; }
+  .dice-info { font-size: 15px; }
+  .dice-info .big { font-size: 24px; }
+  .dice-info .tag { font-size: 13px; }
+  .status { grid-area: status; font-size: 15px; min-height: 0; align-self: start; }
+  .pad { grid-area: pad; width: 168px; gap: 5px; }
+  .spells { grid-area: spells; }
+  .spell { aspect-ratio: auto; height: 48px; }
+  .spell .icon { width: 36px; height: 36px; }
+}
+
+/* Phone landscape: map on the left, a slim control column on the right. */
+@media (max-height: 560px) and (orientation: landscape) {
+  body { height: 100vh; height: 100dvh; }
+  .layout { grid-template-columns: minmax(0, 1fr) 270px; padding: 6px 10px; gap: 10px; }
+  .board-wrap { padding: 4px; overflow: hidden; }
+  #board { height: 100%; max-height: none; }
+  .controls { max-height: 100%; overflow-y: auto; }
+  .controls {
+    padding: 8px; gap: 6px 10px; display: grid; grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "dice dice" "pad spells" "status status";
+  }
+  .dice-box { grid-area: dice; gap: 8px; }
+  .die { width: 36px; height: 36px; }
+  .dice-info { font-size: 14px; }
+  .dice-info .big { font-size: 20px; display: inline; margin-right: 4px; }
+  .dice-info br { display: none; }
+  .dice-info .tag { font-size: 12px; margin-top: 0; }
+  .status { grid-area: status; font-size: 14px; min-height: 0; }
+  .pad { grid-area: pad; width: 138px; gap: 4px; }
+  .pad button { min-height: 40px; }
+  .spells { grid-area: spells; grid-template-columns: repeat(2, 1fr); align-content: start; }
+  .spell { aspect-ratio: auto; height: 40px; min-height: 40px; }
+  .spell .icon { width: 30px; height: 30px; }
 }
 @media (max-width: 420px) {
   .shop-items { grid-template-columns: 1fr; }

@@ -47,6 +47,7 @@ test('level generation invariants (floors 1-80, 6 seeds)', () => {
       const tag = `seed ${seed} floor ${floor}`;
 
       for (const r of L.rooms) ok(r.x1 - r.x0 - 1 >= 3 && r.y1 - r.y0 - 1 >= 3, `room < 3x3 ${tag}`);
+      ok(L.w <= 21 && L.h <= 15, `map larger than 21x15 ${tag}`);
       for (let x = 0; x < L.w; x++) ok(at(x, 0) === 0 && at(x, L.h - 1) === 0, `border open ${tag}`);
       for (let y = 0; y < L.h; y++) ok(at(0, y) === 0 && at(L.w - 1, y) === 0, `border open ${tag}`);
       ok(at(L.start.x, L.start.y) === 1 && at(L.stairs.x, L.stairs.y) === 1, `start/stairs on floor ${tag}`);

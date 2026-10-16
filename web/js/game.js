@@ -57,7 +57,7 @@
         usedDirs: [], turnPath: [], move: null,
         armed: { noclip: false, invis: false }, invisUsed: false,
         level: null, shop: null,
-        log: [],
+        log: [], logSeq: 0,
         stats: { kills: 0, coins: 0, floorsCleared: 0 },
         floorStartTurn: 0,
         checkpoint: null,
@@ -136,7 +136,8 @@
 
     // ---------------------------------------------------------------- helpers
     log(text, kind) {
-      this.s.log.push({ text, kind: kind || 'info', turn: this.s.turn });
+      this.s.logSeq = (this.s.logSeq || 0) + 1;
+      this.s.log.push({ text, kind: kind || 'info', turn: this.s.turn, seq: this.s.logSeq });
       if (this.s.log.length > 60) this.s.log.splice(0, this.s.log.length - 60);
     }
 

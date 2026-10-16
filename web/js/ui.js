@@ -20,7 +20,10 @@
   const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   let game = null;
-  const ui = { busy: false, targeting: false, preview: null, boardKey: null, rolled: false };
+  const ui = { busy: false, targeting: false, preview: null, boardKey: null, rolled: false, journalSeen: 0, toastSeq: 0 };
+  // Journal entries of these kinds also pop up briefly over the map.
+  const TOAST_KINDS = new Set(['good', 'bad', 'fight', 'warn', 'spell', 'floor', 'shop']);
+  const DIE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="5" width="22" height="22" rx="5" style="fill:#fff;stroke:currentColor" stroke-width="2.4"/><circle cx="11" cy="11" r="2.3" style="fill:#2b2a33"/><circle cx="16" cy="16" r="2.3" style="fill:#2b2a33"/><circle cx="21" cy="21" r="2.3" style="fill:#2b2a33"/></svg>';
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -60,7 +63,7 @@
       <span class="stat" title="Strength">${RD.icon('i-sp-str')}<b>${p.str}</b></span>
       <span class="stat" title="Coins">${RD.icon('i-coin')}<b>${p.coins}</b></span>
       ${keys ? `<span class="stat" title="Keys">${keys}</span>` : ''}
-      <span class="stat muted" title="Turns taken">Turn ${s.turn + 1}</span>`;
+      <span class="stat muted stat-turn" title="Turns taken">Turn ${s.turn + 1}</span>`;
   }
 
   function renderBoard() {
@@ -103,15 +106,28 @@
     }
 
     $('#status').innerHTML = statusText();
-    const rollBtn = $('#rollBtn');
-    rollBtn.disabled = ui.busy || s.phase !== 'roll';
     const legal = ui.busy ? [] : game.availableDirs();
     const dirs = ui.targeting ? [] : legal;
-    $('#passBtn').hidden = ui.busy || ui.targeting || !(s.phase === 'choose' && legal.length === 0);
-
     document.querySelectorAll('#pad [data-dir]').forEach((b) => { b.disabled = !dirs.includes(b.dataset.dir); });
-    const center = $('#pad .pad-center');
-    if (center) center.textContent = s.dice && s.level && (s.phase === 'choose' || s.phase === 'redirect' || s.phase === 'moving') ? game.stepsLeft() : '·';
+
+    // The pad's center is the Roll button, becomes Pass when no move is
+    // legal, and otherwise shows the moves left.
+    const center = $('#padCenter');
+    const canRoll = !ui.busy && !ui.targeting && s.phase === 'roll';
+    const canPass = !ui.busy && !ui.targeting && s.phase === 'choose' && legal.length === 0;
+    const mode = canRoll ? 'roll' : canPass ? 'pass' : 'count';
+    if (center.dataset.mode !== mode || mode === 'count') {
+      center.dataset.mode = mode;
+      center.className = 'pad-center ' + mode;
+      center.disabled = mode === 'count';
+      if (mode === 'roll') { center.innerHTML = `${DIE_ICON}<span>Roll</span>`; center.setAttribute('aria-label', 'Roll dice'); }
+      else if (mode === 'pass') { center.innerHTML = '<span>Pass</span>'; center.setAttribute('aria-label', 'Pass turn'); }
+      else {
+        const moving = s.dice && s.level && ['choose', 'redirect', 'moving'].includes(s.phase);
+        center.innerHTML = moving ? `${game.stepsLeft()}<small>moves</small>` : '·';
+        center.setAttribute('aria-label', moving ? `${game.stepsLeft()} moves left` : 'Waiting');
+      }
+    }
 
     document.querySelectorAll('#spells [data-spell]').forEach((b) => {
       const name = b.dataset.spell;
@@ -124,19 +140,52 @@
       b.querySelector('.count').textContent = n;
     });
 
-    const log = $('#log');
-    log.innerHTML = s.log.slice(-30).reverse().map((l) => `<li class="log-${l.kind}">${esc(l.text)}</li>`).join('');
+    renderJournal();
+  }
+
+  // Journal button badge plus a short-lived toast for the newest important entry.
+  let toastTimer = null;
+  function renderJournal() {
+    const log = game.s.log;
+    const unread = log.filter((l) => (l.seq || 0) > ui.journalSeen).length;
+    const badge = $('#journalCount');
+    badge.hidden = !unread;
+    badge.textContent = unread > 9 ? '9+' : unread;
+    $('#journalBtn').setAttribute('aria-label', unread ? `Journal, ${unread} new` : 'Journal');
+
+    const fresh = log.filter((l) => (l.seq || 0) > ui.toastSeq && TOAST_KINDS.has(l.kind));
+    ui.toastSeq = Math.max(ui.toastSeq, game.s.logSeq || 0);
+    if (!fresh.length) return;
+    const last = fresh[fresh.length - 1];
+    const toast = $('#toast');
+    toast.className = 'toast log-' + last.kind;
+    toast.textContent = last.text;
+    toast.hidden = false;
+    // Restart the entrance animation for back-to-back messages.
+    toast.style.animation = 'none'; void toast.offsetWidth; toast.style.animation = '';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
+  }
+
+  function showJournal() {
+    ui.journalSeen = game.s.logSeq || 0;
+    renderJournal();
+    const items = game.s.log.slice().reverse().map((l) => `<li class="log-${l.kind}">${esc(l.text)}</li>`).join('');
+    openModal(`
+      <h2>Journal</h2>
+      <ol class="log">${items || '<li class="muted">Nothing yet.</li>'}</ol>
+      <div class="row"><button class="btn primary" type="button" data-close>Close</button></div>`);
   }
 
   function statusText() {
     const s = game.s;
     if (ui.targeting) return 'Fireball: tap an obstacle (web, enemy or locked door) to destroy it. Tap the spell again to cancel.';
     switch (s.phase) {
-      case 'roll': return s.player.webbed ? 'Still tangled in web: this roll is halved. Roll the dice.' : 'Roll the dice to move.';
+      case 'roll': return s.player.webbed ? 'Still tangled in web: this roll is halved. Tap Roll.' : 'Tap Roll (center of the pad) or press Space.';
       case 'choose': {
         const n = game.availableDirs().length;
-        if (!n) return 'No legal move with this roll. Pass the turn (or use a spell).';
-        return `Pick a ${s.parity === 'ortho' ? 'straight (orthogonal)' : 'diagonal'} direction. You'll keep going until your ${s.steps} moves run out or you're blocked.`;
+        if (!n) return 'No legal move with this roll. Tap Pass (or use a spell).';
+        return `Tap the map in a ${s.parity === 'ortho' ? 'straight (orthogonal)' : 'diagonal'} direction. You keep going until your ${s.steps} moves run out or you're blocked.`;
       }
       case 'moving': return 'Moving…';
       case 'redirect': return `Blocked with ${s.move.stepsLeft} move${s.move.stepsLeft > 1 ? 's' : ''} left. Choose a new direction (no doubling back unless it's the only way).`;
@@ -201,40 +250,87 @@
     save();
   }
 
+  /* Direction of a click/tap on the map, relative to the player: the legal
+   * direction nearest the tap's angle, if it is within 45 degrees. */
+  function dirFromEvent(e) {
+    if (!game || !game.s.level) return null;
+    const legal = game.availableDirs();
+    if (!legal.length) return null;
+    const svg = $('#board');
+    const m = svg.getScreenCTM();
+    if (!m) return null;
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    const p = game.s.player;
+    const dx = pt.x - (p.x + 0.5) * RD.C, dy = pt.y - (p.y + 0.5) * RD.C;
+    if (Math.hypot(dx, dy) < RD.C * 0.45) return null;
+    const ang = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    let best = null, bestDiff = 999;
+    for (const d of legal) {
+      const diff = Math.abs((((ang - ANGLE[d]) % 360) + 540) % 360 - 180);
+      if (diff < bestDiff) { bestDiff = diff; best = d; }
+    }
+    return bestDiff <= 45 ? best : null;
+  }
+
   function setupInput() {
-    $('#rollBtn').addEventListener('click', roll);
-    $('#passBtn').addEventListener('click', () => { if (game.passTurn()) { render(); save(); } });
+    $('#journalBtn').addEventListener('click', () => { if (game) showJournal(); });
+    const menuItems = $('#menuItems'), menuToggle = $('#menuToggle');
+    const setMenu = (open) => { menuItems.classList.toggle('open', open); menuToggle.setAttribute('aria-expanded', String(open)); };
+    menuToggle.addEventListener('click', (e) => { e.stopPropagation(); setMenu(!menuItems.classList.contains('open')); });
+    menuItems.addEventListener('click', () => setMenu(false));
+    document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) setMenu(false); });
     $('#helpBtn').addEventListener('click', () => showHelp());
     $('#menuBtn').addEventListener('click', () => showStart(true));
     $('#savesBtn').addEventListener('click', () => { if (!ui.busy) showSaves(); });
     $('#themeBtn').addEventListener('click', toggleTheme);
 
     const board = $('#board');
-    board.addEventListener('click', (e) => {
+    // Listen on the whole map area so taps just outside the drawn map count too.
+    const boardWrap = board.parentElement;
+    boardWrap.addEventListener('click', (e) => {
       const t = e.target.closest('[data-target]');
       if (t && ui.targeting) {
         if (game.fireball(Number(t.dataset.target))) ui.targeting = false;
         render(); save();
         return;
       }
+      if (ui.targeting) return;
       const a = e.target.closest('[data-dir]');
-      if (a) choose(a.dataset.dir);
+      if (a) { choose(a.dataset.dir); return; }
+      // Tap anywhere: move in the direction of the tap.
+      if (ui.busy || (game.s.phase !== 'choose' && game.s.phase !== 'redirect')) return;
+      const dir = dirFromEvent(e);
+      if (dir) choose(dir);
+      else if (game.availableDirs().length) {
+        board.classList.remove('nudge'); void board.getBoundingClientRect(); board.classList.add('nudge');
+        setTimeout(() => board.classList.remove('nudge'), 1100);
+      }
     });
-    const hover = (e) => {
-      const a = e.target.closest('[data-dir]');
-      const next = a && !ui.busy ? game.previewPath(a.dataset.dir) : null;
+    const setPreview = (dir) => {
+      const next = dir && !ui.busy && !ui.targeting ? game.previewPath(dir) : null;
       if (JSON.stringify(next) === JSON.stringify(ui.preview)) return;
       ui.preview = next;
       renderPreview();
     };
-    board.addEventListener('mouseover', hover);
-    board.addEventListener('mouseleave', hover);
+    const hover = (e) => { const a = e.target.closest('[data-dir]'); setPreview(a && a.dataset.dir); };
+    // With a mouse, preview wherever a click on the map would go.
+    boardWrap.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') setPreview(dirFromEvent(e)); });
+    boardWrap.addEventListener('mouseleave', () => setPreview(null));
 
     const pad = $('#pad');
     pad.innerHTML = PAD_ORDER.map((d) => d
       ? `<button type="button" data-dir="${d}" aria-label="Move ${d}"><svg viewBox="-16 -16 32 32"><path d="M-9 0H8M1-7L8 0L1 7" transform="rotate(${ANGLE[d]})" style="fill:none;stroke:currentColor;stroke-width:3.4;stroke-linecap:round;stroke-linejoin:round"/></svg></button>`
-      : '<button type="button" class="pad-center" disabled aria-hidden="true">·</button>').join('');
-    pad.addEventListener('click', (e) => { const b = e.target.closest('[data-dir]'); if (b && !b.disabled) choose(b.dataset.dir); });
+      : '<button type="button" class="pad-center" id="padCenter" disabled>·</button>').join('');
+    pad.addEventListener('click', (e) => {
+      if (e.target.closest('#padCenter')) {
+        const mode = $('#padCenter').dataset.mode;
+        if (mode === 'roll') roll();
+        else if (mode === 'pass' && game.passTurn()) { render(); save(); }
+        return;
+      }
+      const b = e.target.closest('[data-dir]');
+      if (b && !b.disabled) choose(b.dataset.dir);
+    });
     pad.addEventListener('mouseover', hover);
     pad.addEventListener('mouseleave', hover);
 
@@ -309,6 +405,8 @@
   function startWith(g) {
     game = g;
     ui.boardKey = null; ui.targeting = false; ui.preview = null; ui.busy = false;
+    ui.journalSeen = g.s.logSeq || 0;
+    ui.toastSeq = (g.s.logSeq || 1) - 1;
     closeModal();
     render();
     save();
@@ -497,7 +595,7 @@
         ${SPELL_ORDER.map((n) => legend('i-sp-' + n, `<b>${SPELLS[n].name}</b>: ${SPELLS[n].desc}`)).join('')}
       </div>
       <h3>Controls</h3>
-      <p class="muted">Tap the arrows on the map or the direction pad. Space/Enter: roll · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too.</p>
+      <p class="muted">Tap Roll in the middle of the direction pad. Then tap anywhere on the map in the direction you want to go (the nearest allowed direction is used), or tap an arrow on the pad. The Journal button keeps a log of everything that happened. Keyboard: Space/Enter: roll · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too.</p>
       <h3>Saving</h3>
       <p>The game saves a checkpoint each time you reach a new floor. A checkpoint holds your seed, the floor, your stats, coins and spells. The floor itself is rebuilt from the seed, so loading always restarts that floor from its beginning (same layout, same dice). Progress inside a floor isn't saved. Use <b>Saves</b> for named save slots, a copyable save code, or a save file.</p>
       <div class="row"><button class="btn primary" type="button" id="helpClose">Got it</button></div>`, !back);
@@ -650,15 +748,10 @@
     const saved = store.get(SAVE_KEY);
     let g = null;
     g = saved ? Game.fromSave(parseJson(saved)).game || null : null;
-    if (g) {
-      game = g;
-      render();
-      showStart(false);
-    } else {
-      game = Game.create('');
-      render();
-      showStart(false);
-    }
+    game = g || Game.create('');
+    ui.journalSeen = ui.toastSeq = game.s.logSeq || 0;
+    render();
+    showStart(false);
   }
 
   window.DiceDelve = { get game() { return game; }, render };

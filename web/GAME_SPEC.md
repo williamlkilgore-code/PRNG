@@ -161,8 +161,8 @@ Armed spells cost a charge only if they take effect. An armed but unused spell i
 Floor `f` is `w × h` squares, including the outer wall:
 
 ```
-w = 17 + 2 * min(7, floor((f-1)/3))   // 17 … 31
-h = 13 + 2 * min(5, floor((f-1)/4))   // 13 … 23
+w = 17 + 2 * min(2, floor((f-1)/3))   // 17 … 21 (capped so floors fit phone screens)
+h = 13 + 2 * min(1, floor((f-1)/4))   // 13 … 15
 ```
 
 | Content | Count (`rng.int(a, b)` includes both ends) |
@@ -171,8 +171,8 @@ h = 13 + 2 * min(5, floor((f-1)/4))   // 13 … 23
 | Chests | `int(f < 3 ? 0 : 1, 1 + min(2, floor(f/10)))` |
 | Hearts | `int(1, 2)` |
 | Med packs | `f >= 3 ? int(0, 1) : 0` |
-| Webs | `min(10, 1 + floor(f/3) + int(0, 1))` |
-| Enemies | `min(14, 1 + floor(f/3) + int(0, 1))` |
+| Webs | `min(6, 1 + floor(f/3) + int(0, 1))` |
+| Enemies | `min(8, 1 + floor(f/3) + int(0, 1))` |
 | Locked doors (wanted) | `f == 1 ? 0 : int(f < 4 ? 0 : 1, min(3, 1 + floor(f/8)))`. Fewer may be placed (see 4.3). |
 | Portal pairs | `f >= 4` and a 40% chance: 1 pair. If also `f >= 15`, a further 40% chance makes it 2 pairs. |
 
@@ -473,10 +473,33 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
   2. Set `ui.busy = true`.
   3. While the phase is `moving`, call `step()`, then `render()`, then wait.
   4. Set `ui.busy = false`, then save, then call `afterPhase()`. That opens the level-done, death or shop screen.
+- **Page layout** (`index.html`, `style.css`):
+  - **Header:** stats on the left. On the right: a **Journal** button with an unread count, then the menu buttons (Rules, New, Saves, theme).
+  - **Main area:** the map (`.board-wrap`, with a `#toast` over it), plus one `.controls` panel holding the dice, status, direction pad and spells.
+  - **Three layouts, chosen by CSS media queries on screen size, never by detecting the device:**
+    - **Desktop:** controls in a column on the right.
+    - **Phone portrait** (≤ 860 px wide): the map fills the screen and the controls dock at the bottom.
+    - **Phone landscape** (≤ 560 px tall): the map on the left and a slim control column on the right.
+  - On narrow or short screens, the brand and turn counter are hidden, and the menu buttons fold into a ☰ dropdown (`#menuToggle`, `#menuItems`).
+- **Journal.**
+  - The log is never shown in the main page. `showJournal()` opens it in a modal and marks entries read.
+  - Every entry has an increasing `seq` (`state.logSeq`).
+  - `renderJournal()` shows the unread count on the button. It also shows the newest entry of an important kind (`TOAST_KINDS`) as a toast for about 2.6 s.
+- **Roll and Pass.**
+  - `#padCenter` is the middle of the direction pad. Its `data-mode` is one of:
+    - `roll` in the roll phase;
+    - `pass` when no direction is legal;
+    - `count` otherwise, showing the moves left (disabled).
+  - There is no separate Roll button.
+- **Tap to move.**
+  - A click or tap anywhere on `.board-wrap`, including just outside the drawn map, picks a direction with `dirFromEvent(e)`. It measures the angle from the player's square to the tap and picks the legal direction nearest that angle, if it is within 45°.
+  - Taps closer than half a square to the player are ignored. If no legal direction is near the tap angle, the arrows pulse (`#board.nudge`).
+  - With a mouse, the same calculation drives the dashed preview while hovering.
+  - The on-map arrows and the pad still work. There is no swipe.
 - **Phase checks.** Input handlers check `ui.busy` and `ui.targeting`. Game rules are enforced by `game.js`, not by the UI.
 - **Modals.** `openModal(html, dismissable)` and `closeModal()`. Screens: start (seed, Continue, New, Rules), help, level done, death, shop, Re-roll picker, Dark One's Luck picker.
 - **Keys.**
-  - Space, Enter or R: roll, or pass when no move is legal.
+  - Space, Enter or R: roll, or pass when no move is legal (the same as tapping the pad center).
   - Arrow keys or WASD: orthogonal moves. Q, E, Z, C: diagonal moves.
   - Number pad: 8, 2, 4, 6 for orthogonal and 7, 9, 1, 3 for diagonal.
   - Esc: cancel Fireball targeting or close a modal.

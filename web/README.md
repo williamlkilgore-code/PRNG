@@ -11,7 +11,7 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
 ## Rules implemented
 
 - **Movement:** roll 2d6. The total is how many squares you move. An even total moves orthogonally and an odd total moves diagonally. Once you pick a direction you keep going until your moves run out. If you're blocked with moves left, you pick a new legal direction. You can't reverse a direction already used this turn. If that leaves no move, you may only step onto squares you haven't walked this turn, and retracing is allowed only when it is the only move. Diagonal moves can't squeeze between two walls that meet at a corner.
-- **Floors:** rooms are at least 3×3 and joined by one-cell doorways. The start square is a smiley face. Stepping onto the staircase ends the floor.
+- **Floors:** grow from 17×13 to at most 21×15. Rooms are at least 3×3 and joined by one-cell doorways. The start square is a smiley face. Stepping onto the staircase ends the floor.
 - **Spider web:** stops movement at once, and the next roll's movement is halved (rounded down, minimum 1). The roll's parity still decides orthogonal or diagonal.
 - **Enemy:** when you run into one, it deals `floor(level/20 + 1)` damage and you hit it for your strength. Enemies have `floor(level/10 + 1)` health. If you kill it, you move into its square and keep going. If it survives, your move ends.
 - **Locked door:** always sits in a doorway with wall on two orthogonally opposite sides. It opens with the key of the same color. Every key is placed where it can be reached from the start with all doors still locked.
@@ -29,6 +29,8 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
   - **Re-roll:** re-roll one die.
   - **Invisibility:** pass through enemies for one turn.
   - No Clipping and Invisibility are "armed" first, and a charge is used up only if the spell actually takes effect.
+
+**Controls:** tap Roll in the center of the direction pad, then tap anywhere on the map in the direction you want to go (or use the pad or keyboard). The layout adapts to desktop, phone portrait and phone landscape. The journal sits behind a button, and important events pop up briefly over the map.
 
 The game seed decides every floor, so the same seed always gives the same dungeon. **Saving:** the game saves a small checkpoint each time you reach a new floor: the seed, the floor number, your stats, coins and spells. The floor itself is rebuilt from the seed, so loading restarts that floor from its beginning, and progress inside a floor isn't saved. The **Saves** menu offers up to 12 named slots in the browser, a copyable save code, and export/import of a `.json` save file.
 

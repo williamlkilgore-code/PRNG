@@ -18,37 +18,36 @@
     <h1 class="brand">Dice Delve</h1>
     <div class="stats" id="stats" aria-live="polite"></div>
     <div class="menu">
-      <button class="ghost-btn" id="helpBtn" type="button" title="How to play">Rules</button>
-      <button class="ghost-btn" id="menuBtn" type="button" title="New game">New</button>
-      <button class="ghost-btn" id="savesBtn" type="button" title="Save, load, export or import games">Saves</button>
-      <button class="ghost-btn" id="themeBtn" type="button" title="Toggle light/dark" aria-label="Toggle light/dark"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" style="fill:none;stroke:currentColor" stroke-width="2"/><path d="M10 2a8 8 0 0 1 0 16Z" style="fill:currentColor"/></svg></button>
+      <button class="ghost-btn" id="journalBtn" type="button" title="Journal" aria-label="Journal">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 2.5h10a2 2 0 0 1 2 2v13H6a2 2 0 0 1-2-2Z M4 15.5a2 2 0 0 1 2-2h10 M7.5 6.5h5 M7.5 9.5h5" style="fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round"/></svg>
+        <span class="label">Journal</span><span class="unread" id="journalCount" hidden></span>
+      </button>
+      <button class="ghost-btn menu-toggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="menuItems" aria-label="Menu">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/></svg>
+      </button>
+      <div class="menu-items" id="menuItems">
+        <button class="ghost-btn" id="helpBtn" type="button" title="How to play">Rules</button>
+        <button class="ghost-btn" id="menuBtn" type="button" title="New game">New</button>
+        <button class="ghost-btn" id="savesBtn" type="button" title="Save, load, export or import games">Saves</button>
+        <button class="ghost-btn" id="themeBtn" type="button" title="Toggle light/dark" aria-label="Toggle light/dark"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" style="fill:none;stroke:currentColor" stroke-width="2"/><path d="M10 2a8 8 0 0 1 0 16Z" style="fill:currentColor"/></svg><span class="label">Theme</span></button>
+      </div>
     </div>
   </header>
 
   <main class="layout">
     <section class="board-wrap" aria-label="Dungeon map">
       <svg id="board" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Dungeon map"></svg>
+      <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
     </section>
 
-    <aside class="panel">
-      <div class="card dice-card">
+    <aside class="controls" aria-label="Controls">
+      <div class="dice-box">
         <div class="dice" id="dice"></div>
         <div class="dice-info" id="diceInfo"></div>
       </div>
       <p class="status" id="status"></p>
-      <div class="actions">
-        <button class="btn primary" id="rollBtn" type="button">Roll dice <kbd>Space</kbd></button>
-        <button class="btn" id="passBtn" type="button" hidden>Pass turn</button>
-      </div>
       <div class="pad" id="pad" aria-label="Direction pad"></div>
-      <div class="card">
-        <h2 class="card-title">Spells</h2>
-        <div class="spells" id="spells"></div>
-      </div>
-      <div class="card log-card">
-        <h2 class="card-title">Journal</h2>
-        <ol class="log" id="log"></ol>
-      </div>
+      <div class="spells" id="spells" aria-label="Spells"></div>
     </aside>
   </main>
 
