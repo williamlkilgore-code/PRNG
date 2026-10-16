@@ -79,7 +79,7 @@
     return { seen, size: q.length, cells: q };
   }
 
-  function tryGenerate(rng, floor, w, h) {
+  function tryGenerate(rng, floor, w, h, seed) {
     const rooms = splitRegions(rng, w, h);
     if (rooms.length < 3) return null;
     const tiles = new Array(w * h).fill(0);
@@ -147,8 +147,11 @@
       locked.add(i);
       const z = reach(L, sx, sy, locked);
       const free = z.cells.filter((c) => tiles[c] === 1 && !used.has(c)).length;
+      // Keep at least one room besides the start room reachable without keys
+      // (dark floors place their torch there).
+      const otherRoom = z.cells.some((c) => tiles[c] === 1 && roomOf[c] !== startRoom && !used.has(c));
       // The doorway itself always drops out of reach; require more than that.
-      if (z.size < zone.size - 1 && free >= 12) { zone = z; lockList.push(d); }
+      if (z.size < zone.size - 1 && free >= 12 && otherRoom) { zone = z; lockList.push(d); }
       else locked.delete(i);
     }
     lockList.forEach((d, k) => {
@@ -170,6 +173,20 @@
       const c = take(zoneFloor);
       if (!c) return null;
       L.objects.push({ type: 'key', x: c[0], y: c[1], color: KEY_COLORS[k] });
+    }
+
+    // Dark floors: a torch the player can reach from the start without keys
+    // (never in the start room), and a guaranteed dark chest anywhere.
+    L.dark = DC.rules.isDarkFloor(seed, floor);
+    if (L.dark) {
+      const t = take(zoneFloor.filter((c) => roomOf[c] !== startRoom));
+      if (!t) return null;
+      L.objects.push({ type: 'torch', x: t[0], y: t[1] });
+      const all = [];
+      for (let i = 0; i < w * h; i++) if (tiles[i] === 1) all.push(i);
+      const c = take(all);
+      if (!c) return null;
+      L.objects.push({ type: 'darkchest', x: c[0], y: c[1] });
     }
 
     // Portals: always in pairs, both ends inside the same locked-door zone so
@@ -234,7 +251,7 @@
     const w = 17 + 2 * Math.min(2, Math.floor((floor - 1) / 3));
     const h = 13 + 2 * Math.min(1, Math.floor((floor - 1) / 4));
     for (let attempt = 0; attempt < 50; attempt++) {
-      const L = tryGenerate(rng, floor, w, h);
+      const L = tryGenerate(rng, floor, w, h, seed);
       if (L) { L.floor = floor; return L; }
     }
     throw new Error('Level generation failed for floor ' + floor);

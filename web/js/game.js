@@ -24,7 +24,7 @@
     reroll: { name: 'Re-roll', desc: 'After rolling, re-roll one of the two dice.' },
     invis: { name: 'Invisibility', desc: 'Arm for one turn: pass through enemies without encountering them.' },
   };
-  const SHOP_POOL = ['maxhp', 'gamble', 'noclip', 'fireball', 'luck', 'reroll', 'invis'];
+  const SHOP_POOL = ['maxhp', 'gamble', 'noclip', 'fireball', 'luck', 'reroll', 'invis', 'torch'];
   const CHECKPOINT_VERSION = 2;
 
   function randomSeedText() {
@@ -49,7 +49,7 @@
         phase: 'roll',
         player: {
           x: 0, y: 0, hp: R.START_HP, maxHp: R.START_HP, str: R.START_STR, coins: 0,
-          keys: [], webbed: false,
+          keys: [], webbed: false, torches: 0,
           spells: { noclip: 0, fireball: 0, luck: 0, reroll: 0, invis: 0 },
         },
         diceState: 0,
@@ -82,7 +82,7 @@
         v: CHECKPOINT_VERSION,
         seedText: s.seedText,
         floor,
-        player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, spells: Object.assign({}, p.spells) },
+        player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, torches: p.torches, spells: Object.assign({}, p.spells) },
         stats: Object.assign({}, s.stats),
         turn: s.turn,
       };
@@ -99,6 +99,7 @@
       const p = cp.player;
       if (!obj(p) || !int(p.maxHp, 1, 100000) || !int(p.hp, 1, p.maxHp) || !int(p.str, 0, 100000) || !int(p.coins, 0, 1e9)) return 'bad player stats';
       if (!obj(p.spells) || !Object.keys(SPELLS).every((k) => int(p.spells[k], 0, 10000))) return 'bad spells';
+      if (p.torches !== undefined && !int(p.torches, 0, 10000)) return 'bad torches'; // optional: older saves have none
       if (cp.stats !== undefined && !(obj(cp.stats) && ['kills', 'coins', 'floorsCleared'].every((k) => int(cp.stats[k], 0, 1e9)))) return 'bad stats';
       if (cp.turn !== undefined && !int(cp.turn, 0, 1e9)) return 'bad turn';
       return null;
@@ -125,7 +126,7 @@
       if (why) return { error: why };
       const g = new Game(Game.newState(cp.seedText.trim()));
       const s = g.s, p = s.player;
-      Object.assign(p, { hp: cp.player.hp, maxHp: cp.player.maxHp, str: cp.player.str, coins: cp.player.coins });
+      Object.assign(p, { hp: cp.player.hp, maxHp: cp.player.maxHp, str: cp.player.str, coins: cp.player.coins, torches: cp.player.torches || 0 });
       for (const k of Object.keys(SPELLS)) p.spells[k] = cp.player.spells[k];
       if (cp.stats) Object.assign(s.stats, { kills: cp.stats.kills, coins: cp.stats.coins, floorsCleared: cp.stats.floorsCleared });
       s.turn = cp.turn || 0;
@@ -154,6 +155,7 @@
       if (!L) return;
       this.objAt = new Int32Array(L.w * L.h).fill(-1);
       L.objects.forEach((o, i) => { if (!o.done) this.objAt[o.y * L.w + o.x] = i; });
+      this.updateVision();
     }
 
     inB(x, y) { const L = this.s.level; return x >= 0 && y >= 0 && x < L.w && y < L.h; }
@@ -237,7 +239,7 @@
       let { x, y } = this.s.player;
       while (steps > 0) {
         const m = this.legalMove(dir, steps, x, y);
-        if (!m) break;
+        if (!m || !this.isVisible(m.x, m.y)) break;
         x = m.x; y = m.y; steps -= m.walls + 1;
         out.push([x, y]);
         const o = this.obj(x, y);
@@ -270,8 +272,66 @@
         s.level.trail = [[[p.x, p.y]]];
         s.phase = 'roll';
         this.log(`Floor ${f}. Find the staircase.`, 'floor');
+        if (s.level.dark) this.log('This floor is dark. Find the torch, or light one of your own.', 'warn');
       }
       this.rebuildIndex();
+      this.updateVision();
+    }
+
+    // ---------------------------------------------------------------- vision
+    /* On dark floors you see the 8 squares around you, or everything within
+     * TORCH_RADIUS (Chebyshev) with a clear line of sight once a torch is lit.
+     * Seen squares are remembered in level.seen; how much of that memory is
+     * drawn depends on rules.darkMemory(floor). */
+    updateVision() {
+      const L = this.s.level;
+      this.vis = null;
+      if (!L || !L.dark) return;
+      if (!Array.isArray(L.seen) || L.seen.length !== L.w * L.h) L.seen = new Array(L.w * L.h).fill(0);
+      const p = this.s.player;
+      const r = L.torchLit ? R.TORCH_RADIUS : 1;
+      const vis = new Set();
+      for (let y = Math.max(0, p.y - r); y <= Math.min(L.h - 1, p.y + r); y++) {
+        for (let x = Math.max(0, p.x - r); x <= Math.min(L.w - 1, p.x + r); x++) {
+          if (r === 1 || this.lineOfSight(p.x, p.y, x, y)) vis.add(y * L.w + x);
+        }
+      }
+      for (const i of vis) L.seen[i] = 1;
+      if (vis.has(L.stairs.y * L.w + L.stairs.x)) L.seenStairs = true;
+      for (const o of L.objects) if (vis.has(o.y * L.w + o.x)) o.seen = true;
+      this.vis = vis;
+    }
+
+    // Bresenham line; squares strictly between the ends must not be solid.
+    lineOfSight(x0, y0, x1, y1) {
+      let dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
+      const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      let err = dx + dy, x = x0, y = y0;
+      while (x !== x1 || y !== y1) {
+        const e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x += sx; }
+        if (e2 <= dx) { err += dx; y += sy; }
+        if ((x !== x1 || y !== y1) && this.isSolid(x, y)) return false;
+      }
+      return true;
+    }
+
+    isVisible(x, y) {
+      return !this.vis || this.vis.has(y * this.s.level.w + x);
+    }
+
+    canLightTorch() {
+      const s = this.s, L = s.level;
+      return !!(L && L.dark && !L.torchLit && s.player.torches > 0 && ['roll', 'choose', 'redirect'].includes(s.phase));
+    }
+
+    lightTorch() {
+      if (!this.canLightTorch()) return false;
+      this.s.player.torches--;
+      this.s.level.torchLit = true;
+      this.log('You light a torch. It will burn until you leave this floor.', 'spell');
+      this.updateVision();
+      return true;
     }
 
     completeFloor() {
@@ -361,6 +421,7 @@
       if (this.s.turnPath) this.s.turnPath.push(y * L.w + x);
       if (jump) L.trail.push([[x, y]]);
       else L.trail[L.trail.length - 1].push([x, y]);
+      this.updateVision();
     }
 
     /* Advance the current move by one step. Returns an event for the UI:
@@ -445,6 +506,24 @@
             this.log(`Treasure chest! ${R.coinValue(f)} + d6 [${rolls.join(', ')}] = ${v} coins.`, 'good');
             break;
           }
+          case 'darkchest': {
+            const rolls = [];
+            for (let i = 0; i < R.bonusDice(f); i++) rolls.push(this.d(6));
+            const v = R.coinValue(f) + rolls.reduce((a, b) => a + b, 0);
+            const kinds = Object.keys(SPELLS);
+            const spell = kinds[this.d(kinds.length) - 1];
+            this.gainCoins(v);
+            p.spells[spell]++;
+            this.clearObj(o);
+            this.log(`Dark chest! ${v} coins and a ${SPELLS[spell].name} spell.`, 'good');
+            break;
+          }
+          case 'torch':
+            this.clearObj(o);
+            L.torchLit = true;
+            this.log('You found a torch and light it. It burns until you leave this floor.', 'good');
+            this.updateVision();
+            break;
           case 'heart': {
             const v = this.heal(R.heartValue(f));
             this.clearObj(o);
@@ -545,7 +624,7 @@
       if (!L) return [];
       return L.objects.map((o, i) => i).filter((i) => {
         const o = L.objects[i];
-        return !o.done && (o.type === 'web' || o.type === 'enemy' || o.type === 'lock');
+        return !o.done && (o.type === 'web' || o.type === 'enemy' || o.type === 'lock') && this.isVisible(o.x, o.y);
       });
     }
 
@@ -557,6 +636,7 @@
       o.burned = true;
       s.player.spells.fireball--;
       if (o.type === 'enemy') s.stats.kills++;
+      this.updateVision(); // a burned door can open a line of sight
       const what = o.type === 'lock' ? `the ${o.color} door` : o.type === 'web' ? 'a web' : 'an enemy';
       this.log(`Fireball! You incinerate ${what}.`, 'spell');
       return true;
@@ -580,6 +660,7 @@
         case 'luck': return 9 + t;
         case 'reroll': return 3 + t;
         case 'invis': return 6 + t;
+        case 'torch': return 4 + t;
       }
       return 0;
     }
@@ -602,6 +683,7 @@
         case 'heal': p.hp = p.maxHp; this.log(`Healed to full for ${cost} coins.`, 'shop'); break;
         case 'str': p.str++; this.log(`Strength increased to ${p.str}.`, 'shop'); break;
         case 'maxhp': p.maxHp += 2; p.hp += 2; it.sold = true; this.log('Max health +2.', 'shop'); break;
+        case 'torch': p.torches++; it.sold = true; this.log('Bought a torch. Light it on a dark floor.', 'shop'); break;
         default:
           p.spells[it.id]++;
           it.sold = true;

@@ -92,6 +92,8 @@ All values use the floor number `f`.
 | **Locked door** | Solid unless you hold the key of the same color. Walking in with the key opens the door, uses up the key, and the slide continues. It always sits in a doorway with walls on two orthogonally opposite sides. |
 | **Spider web** | Movement stops at once on the web square. The web is used up. Your next roll's movement is halved. |
 | **Enemy** | Has `floor(f/10 + 1)` health. See "Encounters" below. |
+| **Torch** | Only on dark floors (see 2.9). Lights at once when picked up and burns until the floor ends. |
+| **Dark chest** | Only on dark floors. Gives the chest's coins plus 1 random spell (one of the 5 kinds, rolled on the floor's dice). |
 | **Portal** | Comes in colored pairs. Stepping onto one moves you to its twin, and the slide continues from the twin in the same direction. Landing on the twin does not trigger it again. Portals are never used up. |
 
 **Encounters.** Moving into an enemy's square counts as an encounter:
@@ -113,6 +115,8 @@ All values use the floor number `f`.
 - Webs and enemies are never placed in the start room, or on any square next to the start (including diagonals).
 - At most one object occupies a square. No object sits on the start or the stairs.
 - Floor 1 has no locked doors.
+- A door is locked only if at least one room besides the start room stays reachable from the start without keys.
+- Every dark floor has exactly one torch and one dark chest. The torch is reachable from the start with all doors locked, and is never in the start room.
 
 ### 2.6 Shops
 
@@ -120,7 +124,7 @@ All values use the floor number `f`.
 - **Schedule after floor 5.** Each gap between shops is 4–10 floors. There are never more than 2 shops in any 10 consecutive floors, which is the same as `shop[i+2] - shop[i] >= 10`.
   - It is generated this way: `next = prev + randInt(max(4, prev2 + 10 - prev), 10)`, where `prev2` is the shop before `prev`.
 - **Always on sale:** **Heal** (restore to full) and **Strength +1**. Both can be bought again and again.
-- **Random offers:** 4 more, drawn without repeats from `maxhp, gamble, noclip, fireball, luck, reroll, invis`. These can each be bought once, except Gamble, which can be played again and again.
+- **Random offers:** 4 more, drawn without repeats from `maxhp, gamble, noclip, fireball, luck, reroll, invis, torch`. These can each be bought once, except Gamble, which can be played again and again.
 
 **Prices.** `t = floor(f/10)`.
 
@@ -134,6 +138,7 @@ All values use the floor number `f`.
 | Invisibility | `6 + t` |
 | No Clipping | `7 + t` |
 | Dark One's Luck | `9 + t` |
+| Torch (carried) | `4 + t` |
 
 **Gamble.** Wager from 1 up to your coins, then roll 1d6:
 
@@ -177,6 +182,17 @@ h = 13 + 2 * min(1, floor((f-1)/4))   // 13 … 15
 | Portal pairs | `f >= 4` and a 40% chance: 1 pair. If also `f >= 15`, a further 40% chance makes it 2 pairs. |
 
 Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colors, in order: `violet, teal`.
+
+### 2.9 Dark floors
+
+| Rule | Detail |
+|---|---|
+| **Which floors** | `rules.isDarkFloor(seed, f)`. Never floors 1–5, never shop floors, never two in a row. The chance is `min(40%, 15% + 1% × (f − 6))`. Each floor rolls on `seedFor(seed, 'dark', f)`. Floors are walked in order and cached per seed, so the "never two in a row" rule is consistent. |
+| **Vision** | Without light: the 8 squares around the player. With a lit torch: every square within `TORCH_RADIUS = 4` (Chebyshev distance) with a clear line of sight. Line of sight is a Bresenham line, and the squares strictly between the ends must not be solid (walls and locked doors block light). |
+| **Memory** | `rules.darkMemory(f)`:<br>• **Floors 6–19, `'full'`:** seen squares stay sketched (dimmed), and seen items stay marked.<br>• **Floors 20–34, `'layout'`:** seen squares stay sketched, but items show only while lit.<br>• **Floor 35+, `'none'`:** nothing is remembered.<br><br>On every dark floor, enemies show only while lit, seen stairs always stay clearly marked, and your own pencil trail is always drawn. |
+| **Torches** | A found torch lights at once. A torch bought in the shop is carried (`player.torches`) and lit with the torch button, only on a dark floor that isn't already lit. A lit torch lasts until the floor ends. |
+| **Rules unchanged** | Movement works the same, so you can walk blind into anything. |
+| **What darkness limits** | The hover preview stops at the first square you can't see. Fireball can only target obstacles you can see. A No Clipping arrow whose landing square is unseen is drawn on the wall instead. |
 
 ---
 
@@ -343,7 +359,7 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   seedText: 'moss-rune-42', seed: <uint32>,
   floor: 1, turn: 0, floorStartTurn: 0,
   phase: 'roll',              // see 4.5
-  player: { x, y, hp, maxHp, str, coins, keys: ['gold'], webbed: false,
+  player: { x, y, hp, maxHp, str, coins, keys: ['gold'], webbed: false, torches: 0,
             spells: { noclip, fireball, luck, reroll, invis } },
   diceState: <uint32>,        // dice RNG state
   dice: [d1, d2] | null, steps: 0, parity: 'ortho'|'diag', halved: false,
@@ -370,19 +386,23 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   doorways: [{ x, y }],
   start: { x, y }, stairs: { x, y },
   objects: [Obj],
-  trail: [[[x, y], ...], ...]  // drawn path; a new segment starts after each portal jump
+  trail: [[[x, y], ...], ...], // drawn path; a new segment starts after each portal jump
+  dark?: true,                 // dark floor (2.9)
+  torchLit?, seenStairs?,      // set during play on dark floors
+  seen?: (0|1)[w*h]            // squares ever seen on this floor (dark floors)
 }
 ```
 
 **Obj:**
 
 ```js
-{ type: 'coin'|'chest'|'heart'|'medpack'|'key'|'lock'|'web'|'enemy'|'portal',
+{ type: 'coin'|'chest'|'darkchest'|'heart'|'medpack'|'key'|'lock'|'web'|'enemy'|'portal'|'torch',
   x, y,
   color?,         // key, lock, portal
   hp?, maxHp?,    // enemy
   pair?,          // portal: index of its twin in objects
   done?,          // used up, killed, or opened. Kept so the renderer can cross it out.
+  seen?,          // dark floors: has been in sight (for 'full' memory)
   burned?         // destroyed by Fireball
 }
 ```
@@ -404,7 +424,10 @@ Objects are never removed from the array, because portals point at each other by
 - **Grid.** Each square is `C = 32` SVG units. The board's `viewBox` is `0 0 w*C h*C`.
 - **Layers.** `#board` contains three `<g>` layers:
   1. `.static`: paper, grid, wall fill plus hatch, and the outline edges. Rebuilt only when the floor changes (`ui.boardKey`).
-  2. `.dyn`: start, stairs, trail, objects, player, and the direction arrows or Fireball targets. Rebuilt on every `render()`.
+  2. `.dyn`: start, trail, objects, then (on dark floors) the fog, then stairs, player, and the direction arrows or Fireball targets. Rebuilt on every `render()`.
+     - **Fog** (`fogLayer`): one `.fog` rect covering the map, filled with `--fog`. An SVG mask (`#fog-mask`) cuts it open: lit squares black (fully clear), remembered squares grey (dimmed). The mask is softened by the `#fog-soft` blur.
+     - Objects hidden by darkness aren't drawn at all, so nothing leaks through.
+     - `game.vis` (a Set of cell indexes, or `null` on lit floors) and `game.isVisible(x, y)` come from `game.updateVision()`. That runs after every move, teleport, torch, fireball and floor change.
   3. `.preview-layer`: the dashed hover preview from `game.previewPath(dir)`. It has `pointer-events: none`, and it is redrawn **without** touching `.dyn`. If hovering rebuilt the arrows, the element under the mouse would be replaced and the click would be lost.
 - **Clickable elements.** Arrows are `<g class="arrow" data-dir="NE">`. Fireball targets are `<rect class="target" data-target="<objIndex>">`. `ui.js` handles them through event delegation on `#board`.
 - **Roll-and-write look.**
@@ -415,7 +438,7 @@ Objects are never removed from the array, because portals point at each other by
 
 ### CSS tokens (`style.css`)
 
-The tokens are defined on `:root`: `--paper --page --grid --ink --muted --pencil --wall --hatch --stone --sun --web --enemy --player --die --good --bad --warn --spell --accent --card --line --shadow --font`.
+The tokens are defined on `:root`: `--fog --paper --page --grid --ink --muted --pencil --wall --hatch --stone --sun --web --enemy --player --die --good --bad --warn --spell --accent --card --line --shadow --font`.
 
 The dark values are written out twice:
 - under `@media (prefers-color-scheme: dark) :root:not([data-theme="light"])`
@@ -437,7 +460,7 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
   v: 2,
   seedText: 'moss-rune-42',
   floor: 7,                                   // the floor to start
-  player: { hp, maxHp, str, coins, spells: { noclip, fireball, luck, reroll, invis } },
+  player: { hp, maxHp, str, coins, torches, spells: { noclip, fireball, luck, reroll, invis } },  // torches optional (0)
   stats: { kills, coins, floorsCleared },     // optional; score screen only
   turn: 123                                   // optional; turn counter
 }
@@ -529,6 +552,7 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
 - **Level invariants** for floors 1–80 on 6 seeds: room size ≥ 3×3, closed border, object placement, lock walls on opposite sides, one key per lock, keys reachable with all locks closed, full connectivity, stairs reachable, portal pairing and lock zones, obstacles present.
 - **Determinism:** the same seed gives the same level.
 - **Scripted scenarios** on small hand-made maps (`sandbox([...rows])`, where `#` is wall, `D` is doorway, `@` is start and `>` is stairs). They cover parity, sliding, redirect and no doubling back, webs, combat, keys and locks, portals, every spell, and the shop and gamble payouts.
+- **Dark floors:** the selection rules (never floors 1–5, shops or two in a row, and a sensible frequency); one torch reachable without keys outside the start room, plus one dark chest; vision radius; walls blocking light; memory; stairs staying marked; preview and fireball limited to what you can see; carried, found and shop torches; the torch resetting each floor; torches in checkpoints.
 - **Saves:** a checkpoint round-trips; a reloaded floor replays identically with the same choices; stats carry over; shop checkpoints open the shop; older saves convert; tampered checkpoints are rejected.
 - **Random play:** 25 simulated games choosing random legal moves (with huge health) for 30 floors or 4,000 actions. It checks that the player never ends up inside a wall, that the game never loops forever, and that the phases are always valid.
 

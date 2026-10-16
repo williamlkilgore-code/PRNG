@@ -46,6 +46,27 @@
     <rect x="13.5" y="15.5" width="5" height="6" rx="1" style="fill:#e8b923;${ink}" stroke-width="1.2"/>
   </symbol>
 
+  <symbol id="i-darkchest" viewBox="0 0 32 32">
+    <path d="M5 14Q5 7 16 7Q27 7 27 14Z" style="fill:#54407e;${ink}" stroke-width="1.8"/>
+    <rect x="5" y="14" width="22" height="12" rx="1.5" style="fill:#3d2f5c;${ink}" stroke-width="1.8"/>
+    <path d="M5 18H27M10 7.8V26M22 7.8V26" style="fill:none;stroke:#c9b6ff" stroke-width="1.6"/>
+    <path d="M18.6 15.2a4.2 4.2 0 1 0 1.6 6.6A3.4 3.4 0 0 1 18.6 15.2Z" style="fill:#ffe58a;stroke:var(--ink)" stroke-width="1"/>
+  </symbol>
+
+  <symbol id="i-torch" viewBox="0 0 32 32">
+    <path d="M14 30L12.6 16h6.8L18 30Z" style="fill:#9c5a22;${ink}" stroke-width="1.6"/>
+    <rect x="11.5" y="13.5" width="9" height="3.2" rx="1" style="fill:#6b6f78;${ink}" stroke-width="1.4"/>
+    <path d="M16 2.5C10.5 8 10.6 12.5 16 13.8C21.4 12.5 21.5 8 16 2.5Z" style="fill:#f08a24;${ink}" stroke-width="1.4"/>
+    <path d="M16 6.5C13.6 9.3 13.8 11.6 16 12.3C18.2 11.6 18.4 9.3 16 6.5Z" style="fill:#ffd23f"/>
+  </symbol>
+
+  <symbol id="i-moon" viewBox="0 0 32 32">
+    <path d="M20 4.5A11.5 11.5 0 1 0 27.5 24A9.5 9.5 0 0 1 20 4.5Z" style="fill:#c9b6ff;${ink}" stroke-width="1.8"/>
+    <circle cx="24" cy="9" r="1.2" style="fill:var(--ink)"/><circle cx="27.5" cy="14" r=".9" style="fill:var(--ink)"/>
+  </symbol>
+
+  <filter id="fog-soft" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="2.5"/></filter>
+
   <symbol id="i-heart" viewBox="0 0 32 32">
     <path d="M16 27C6 20 3.5 14 7.5 9.8C10.8 6.5 14.6 8 16 11.2C17.4 8 21.2 6.5 24.5 9.8C28.5 14 26 20 16 27Z"
       style="fill:#e0453a;${ink}" stroke-width="1.8"/>
@@ -195,7 +216,7 @@
   function objectSvg(o, i) {
     const color = COLORS[o.color] ? ` style="color:${COLORS[o.color]}"` : '';
     let sym = 'i-' + o.type;
-    if (o.type === 'lock' && o.done) sym = o.burned ? 'i-door-open' : 'i-door-open';
+    if (o.type === 'lock' && o.done) sym = 'i-door-open';
     let out = use(sym, o.x, o.y, color);
     if (o.type === 'enemy' && !o.done && o.maxHp > 1) {
       const bx = o.x * C + C - 9, by = o.y * C + 2;
@@ -206,9 +227,34 @@
     return `<g class="${cls}" data-obj="${i}">${out}</g>`;
   }
 
+  /* Darkness: a fog rect over the map, with holes cut by a mask. Lit squares
+   * are clear; remembered squares (unless memory is 'none') show dimly. */
+  function fogLayer(game, memory) {
+    const L = game.s.level, W = L.w * C, H = L.h * C;
+    let lit = '', seen = '';
+    for (let i = 0; i < L.w * L.h; i++) {
+      const sq = `M${(i % L.w) * C} ${((i / L.w) | 0) * C}h${C}v${C}h-${C}z`;
+      if (game.vis && game.vis.has(i)) lit += sq;
+      else if (memory !== 'none' && L.seen && L.seen[i]) seen += sq;
+    }
+    return `<mask id="fog-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}">
+        <rect width="${W}" height="${H}" fill="#fff"/>
+        <g filter="url(#fog-soft)"><path d="${seen}" fill="#9a9a9a"/><path d="${lit}" fill="#000"/></g>
+      </mask>
+      <rect class="fog" width="${W}" height="${H}" mask="url(#fog-mask)"/>`;
+  }
+
   function dynamicLayer(game, ui) {
     const s = game.s, L = s.level, p = s.player;
-    let out = use('i-start', L.start.x, L.start.y) + use('i-stairs', L.stairs.x, L.stairs.y);
+    const dark = !!L.dark;
+    const memory = dark ? DC.rules.darkMemory(s.floor) : 'full';
+    const lit = (x, y) => game.isVisible(x, y);
+    const remembered = (x, y) => memory !== 'none' && L.seen && L.seen[y * L.w + x];
+    // Enemies only show while lit; other objects stay marked once seen on 'full' memory floors.
+    const shows = (o) => !dark || lit(o.x, o.y) || (o.type !== 'enemy' && memory === 'full' && o.seen);
+
+    let out = '';
+    if (!dark || lit(L.start.x, L.start.y) || remembered(L.start.x, L.start.y)) out += use('i-start', L.start.x, L.start.y);
 
     for (const seg of L.trail) {
       if (seg.length > 1) out += `<polyline class="trail" points="${seg.map(([x, y]) => `${center(x)},${center(y)}`).join(' ')}"/>`;
@@ -216,9 +262,13 @@
       out += `<circle class="trail-dot" cx="${center(x0)}" cy="${center(y0)}" r="2.6"/>`;
     }
 
-    L.objects.forEach((o, i) => { out += objectSvg(o, i); });
+    L.objects.forEach((o, i) => { if (shows(o)) out += objectSvg(o, i); });
 
-    out += `<g class="player${s.armed.invis ? ' invisible' : ''}${s.armed.noclip ? ' noclip' : ''}">${use('i-player', p.x, p.y)}</g>`;
+    if (dark) out += fogLayer(game, memory);
+    // Stairs stay clearly marked once seen, drawn above the fog.
+    if (!dark || lit(L.stairs.x, L.stairs.y) || L.seenStairs) out += use('i-stairs', L.stairs.x, L.stairs.y);
+
+    out += `<g class="player${s.armed.invis ? ' invisible' : ''}${s.armed.noclip ? ' noclip' : ''}${L.torchLit ? ' torchlit' : ''}">${use('i-player', p.x, p.y)}</g>`;
 
     if (ui.targeting) {
       for (const i of game.fireballTargets()) {
@@ -229,7 +279,10 @@
       const steps = game.stepsLeft();
       for (const d of game.availableDirs()) {
         const m = game.legalMove(d, steps);
-        out += `<g class="arrow${m.kind === 'noclip' ? ' ghost' : ''}" data-dir="${d}" transform="translate(${center(m.x)} ${center(m.y)})">
+        // Never reveal an unseen landing square: put a No Clipping arrow on the wall instead.
+        let ax = m.x, ay = m.y;
+        if (m.kind === 'noclip' && !lit(m.x, m.y)) { ax = p.x + DC.DIRS[d][0]; ay = p.y + DC.DIRS[d][1]; }
+        out += `<g class="arrow${m.kind === 'noclip' ? ' ghost' : ''}" data-dir="${d}" transform="translate(${center(ax)} ${center(ay)})">
           <circle r="13"/><path d="M-7 0H6M0.5-5.5L6.5 0L0.5 5.5" transform="rotate(${ANGLE[d]})"/></g>`;
       }
     }

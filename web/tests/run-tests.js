@@ -360,6 +360,98 @@ test('spells', () => {
   ok(h.availableDirs().includes('E'), 'can noclip with 2 moves');
 });
 
+test('dark floor selection and generation', () => {
+  for (const seed of SEEDS) {
+    let dark = 0, eligible = 0;
+    for (let f = 1; f <= 200; f++) {
+      const d = R.isDarkFloor(seed, f);
+      if (f < 6) ok(!d, 'dark before floor 6');
+      if (R.isShopFloor(seed, f)) ok(!d, 'dark shop floor');
+      if (d) ok(!R.isDarkFloor(seed, f - 1), 'two dark floors in a row');
+      if (f >= 6 && !R.isShopFloor(seed, f)) { eligible++; dark += d ? 1 : 0; }
+    }
+    ok(dark / eligible > 0.12 && dark / eligible < 0.4, 'dark frequency ' + (dark / eligible).toFixed(2));
+    for (let f = 2; f <= 60; f++) {
+      if (R.isShopFloor(seed, f)) continue;
+      const L = generateLevel(seed, f);
+      const torches = L.objects.filter((o) => o.type === 'torch');
+      const chests = L.objects.filter((o) => o.type === 'darkchest');
+      ok(!!L.dark === R.isDarkFloor(seed, f), 'level dark flag');
+      if (!L.dark) { ok(!torches.length && !chests.length, 'torch on a lit floor'); continue; }
+      ok(torches.length === 1 && chests.length === 1, 'dark floor needs one torch and one dark chest');
+      const t = torches[0];
+      const blocked = new Set(L.objects.filter((o) => o.type === 'lock').map((o) => o.y * L.w + o.x));
+      ok(reach(L, L.start.x, L.start.y, blocked).seen[t.y * L.w + t.x] === 1, 'torch not reachable without keys');
+      const sr = L.rooms.find((r) => L.start.x > r.x0 && L.start.x < r.x1 && L.start.y > r.y0 && L.start.y < r.y1);
+      ok(!(t.x > sr.x0 && t.x < sr.x1 && t.y > sr.y0 && t.y < sr.y1), 'torch in start room');
+    }
+  }
+  ok(R.darkMemory(6) === 'full' && R.darkMemory(19) === 'full' && R.darkMemory(20) === 'layout' &&
+    R.darkMemory(34) === 'layout' && R.darkMemory(35) === 'none', 'memory thresholds');
+});
+
+test('vision, memory and torches', () => {
+  const map = [
+    '###########',
+    '#@........#',
+    '#.........#',
+    '#....#....#',
+    '#....#...>#',
+    '###########',
+  ];
+  const dark = (extra) => { const g = sandbox(map, extra); g.s.floor = 10; g.s.level.dark = true; g.rebuildIndex(); return g; };
+  const g = dark();
+  const L = g.s.level, at = (x, y) => y * L.w + x;
+  ok(g.vis.size === 9 && g.isVisible(2, 2) && !g.isVisible(3, 1), 'no torch: only adjacent squares');
+  L.torchLit = true; g.updateVision();
+  ok(g.isVisible(5, 1) && !g.isVisible(6, 1), 'torch radius 4');
+  g.s.player.x = 4; g.s.player.y = 4; g.updateVision();
+  ok(g.isVisible(5, 4) && !g.isVisible(6, 4) && !g.isVisible(7, 4), 'walls block light');
+  ok(L.seen[at(5, 1)] === 1, 'seen squares remembered');
+  ok(!L.seenStairs, 'stairs not seen yet');
+  g.s.player.x = 8; g.s.player.y = 2; g.updateVision();
+  ok(L.seenStairs, 'stairs seen');
+  g.s.player.x = 1; g.s.player.y = 1; g.updateVision();
+  ok(L.seenStairs && !g.isVisible(9, 4), 'stairs stay marked when out of sight');
+
+  // Preview stops at the edge of sight; fireball only hits visible obstacles.
+  const h = dark([{ type: 'web', x: 7, y: 1 }]);
+  h.s.player.spells.fireball = 1;
+  forceRoll(h, 4, 4);
+  ok(h.previewPath('E').length === 1, 'preview limited to what you can see');
+  ok(h.fireballTargets().length === 0 && !h.canCast('fireball'), 'cannot fireball unseen web');
+
+  // Carried torch: only on a dark floor that isn't already lit.
+  const k = dark();
+  k.s.player.torches = 1;
+  ok(k.canLightTorch() && k.lightTorch() && k.s.player.torches === 0 && k.s.level.torchLit, 'light carried torch');
+  ok(!k.lightTorch(), 'cannot light twice');
+  const lit = sandbox(map);
+  lit.s.player.torches = 1;
+  ok(!lit.lightTorch() && lit.s.player.torches === 1, 'no torch on lit floors');
+
+  // Found torch lights at once; dark chest gives coins and a spell.
+  const t = dark([{ type: 'torch', x: 2, y: 1 }, { type: 'darkchest', x: 3, y: 1 }]);
+  forceRoll(t, 1, 1);
+  t.choose('E'); run(t);
+  const sp = Object.values(t.s.player.spells).reduce((a, b) => a + b, 0);
+  ok(t.s.level.torchLit && t.s.player.torches === 0, 'found torch lit');
+  ok(sp === 1 && t.s.player.coins >= 2, 'dark chest gave a spell and coins');
+
+  // The torch burns out when the floor ends; carried torches are saved.
+  const run2 = Game.create('torchy');
+  run2.s.level.torchLit = true;
+  run2.s.phase = 'levelDone'; run2.nextFloor();
+  ok(!run2.s.level || !run2.s.level.torchLit, 'torch resets on a new floor');
+  run2.s.player.torches = 2;
+  const cp = JSON.parse(JSON.stringify(run2.checkpointFor(3)));
+  ok(Game.fromSave(cp).game.s.player.torches === 2, 'torches saved');
+  delete cp.player.torches;
+  ok(Game.fromSave(cp).game.s.player.torches === 0, 'older saves get 0 torches');
+  cp.player.torches = -1;
+  ok(Game.fromSave(cp).error, 'bad torch count rejected');
+});
+
 test('shop and gamble', () => {
   const g = Game.create('shoptest');
   while (g.s.floor < 4) { g.s.phase = 'levelDone'; g.nextFloor(); }

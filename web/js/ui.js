@@ -63,6 +63,7 @@
       <span class="stat" title="Strength">${RD.icon('i-sp-str')}<b>${p.str}</b></span>
       <span class="stat" title="Coins">${RD.icon('i-coin')}<b>${p.coins}</b></span>
       ${keys ? `<span class="stat" title="Keys">${keys}</span>` : ''}
+      ${s.level && s.level.dark ? `<span class="stat dark-stat" title="${s.level.torchLit ? 'Dark floor, torch lit' : 'Dark floor'}">${RD.icon(s.level.torchLit ? 'i-torch' : 'i-moon')}<b>${s.level.torchLit ? 'Lit' : 'Dark'}</b></span>` : ''}
       <span class="stat muted stat-turn" title="Turns taken">Turn ${s.turn + 1}</span>`;
   }
 
@@ -139,6 +140,12 @@
       b.classList.toggle('empty', !n);
       b.querySelector('.count').textContent = n;
     });
+
+    const tb = $('#torchBtn');
+    tb.disabled = ui.busy || !game.canLightTorch();
+    tb.classList.toggle('armed', !!(s.level && s.level.torchLit));
+    tb.classList.toggle('empty', !s.player.torches);
+    tb.querySelector('.count').textContent = s.player.torches;
 
     renderJournal();
   }
@@ -336,8 +343,14 @@
 
     $('#spells').innerHTML = SPELL_ORDER.map((n) =>
       `<button type="button" class="spell" data-spell="${n}" title="${esc(SPELLS[n].name + ': ' + SPELLS[n].desc)}" aria-label="${esc(SPELLS[n].name)}">
-        ${RD.icon('i-sp-' + n)}<span class="count">0</span></button>`).join('');
-    $('#spells').addEventListener('click', (e) => { const b = e.target.closest('[data-spell]'); if (b) castSpell(b.dataset.spell); });
+        ${RD.icon('i-sp-' + n)}<span class="count">0</span></button>`).join('') +
+      `<button type="button" class="spell torch-btn" id="torchBtn" title="Torch: light it on a dark floor to see up to ${R.TORCH_RADIUS} squares away until the floor ends." aria-label="Light a torch">
+        ${RD.icon('i-torch')}<span class="count">0</span></button>`;
+    $('#spells').addEventListener('click', (e) => {
+      if (e.target.closest('#torchBtn')) { if (!ui.busy && game.lightTorch()) { render(); save(); } return; }
+      const b = e.target.closest('[data-spell]');
+      if (b) castSpell(b.dataset.spell);
+    });
 
     document.addEventListener('keydown', (e) => {
       if (!game || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -587,6 +600,9 @@
         ${legend('i-chest', 'Treasure chest: coin value + 1d6 per 20 levels')}
         ${legend('i-heart', `Heart: heals ⌈level/20⌉ (${R.heartValue(f)} here), up to max health`)}
         ${legend('i-medpack', 'Med pack: heart value + 1d4 per 20 levels')}
+        ${legend('i-moon', 'Dark floor (from floor 6, never two in a row): you only see the squares next to you. Seen walls stay sketched; deeper down you stop remembering items (floor 20+) and then walls too (floor 35+). Seen stairs always stay marked.')}
+        ${legend('i-torch', `Torch: every dark floor has one you can reach without keys. It lights at once and lets you see ${R.TORCH_RADIUS} squares (walls block light) until the floor ends. Torches bought in the shop are carried; tap the torch button to light one on a dark floor.`)}
+        ${legend('i-darkchest', 'Dark chest: on every dark floor. Chest coins plus a random spell.')}
       </div>
       <h3>Shops</h3>
       <p>Floor 5 is always a shop. After that a shop turns up every 4 to 10 floors, never more than twice in 10 floors. Heal and Strength +1 are always on sale, plus 4 random offers: Max Health +2, Gamble, or spells.</p>
@@ -637,6 +653,7 @@
     heal: { name: 'Healing Draught', desc: 'Restore health to full.', icon: 'i-sp-heal' },
     str: { name: 'Strength +1', desc: 'Strike enemies harder.', icon: 'i-sp-str' },
     maxhp: { name: 'Max Health +2', desc: 'Raise your maximum (and current) health by 2.', icon: 'i-sp-maxhp' },
+    torch: { name: 'Torch', desc: `Carry it; light it on a dark floor to see ${R.TORCH_RADIUS} squares around you until the floor ends.`, icon: 'i-torch' },
     gamble: { name: 'Gamble', desc: 'Roll a die: 1-2 lose wager · 3-4 money back · 5 money back +2 · 6 win double.', icon: 'i-sp-gamble' },
   };
   let wager = 1;
@@ -666,7 +683,7 @@
       const full = it.id === 'heal' && p.hp >= p.maxHp;
       const label = it.sold ? 'Sold' : full ? 'Full health' : `Buy · ${price} ${RD.icon('i-coin', 'inline')}`;
       return `<div class="shop-item${it.sold ? ' sold' : ''}">
-        <div class="head">${RD.icon(info.icon)}<span class="name">${info.name}${SPELLS[it.id] ? ` <span class="muted">(own ${p.spells[it.id]})</span>` : ''}</span></div>
+        <div class="head">${RD.icon(info.icon)}<span class="name">${info.name}${SPELLS[it.id] ? ` <span class="muted">(own ${p.spells[it.id]})</span>` : it.id === 'torch' ? ` <span class="muted">(own ${p.torches})</span>` : ''}</span></div>
         <div class="desc">${info.desc}</div>
         <button class="btn" type="button" data-buy="${i}" ${game.canBuy(i) ? '' : 'disabled'}>${label}</button>
       </div>`;

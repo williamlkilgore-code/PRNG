@@ -21,6 +21,7 @@
   --card: #fffaf0;
   --line: #d6c9a8;
   --shadow: 0 2px 0 rgba(43, 42, 51, .18);
+  --fog: #17151d;
   --font: 'Patrick Hand', 'Comic Sans MS', 'Segoe Print', 'Chalkboard SE', cursive, system-ui;
   color-scheme: light;
 }
@@ -29,7 +30,7 @@
   :root:not([data-theme="light"]) {
     --paper: #23272e; --page: #181b20; --grid: #2f353e; --ink: #ece6d6; --muted: #a39d8e;
     --pencil: #ff7b6b; --wall: #2c3038; --hatch: #4c5361; --stone: #4a4f59; --web: #b9b6c4;
-    --enemy: #a77fe0; --player: #4e9cf0; --die: #f4efe2; --card: #20242a; --line: #39404a;
+    --enemy: #a77fe0; --player: #4e9cf0; --fog: #050608; --die: #f4efe2; --card: #20242a; --line: #39404a;
     --good: #4cc483; --bad: #ff6b5e; --warn: #f0a83a; --spell: #b48ef0; --accent: #5aa7f5;
     --shadow: 0 2px 0 rgba(0, 0, 0, .4);
     color-scheme: dark;
@@ -38,7 +39,7 @@
 :root[data-theme="dark"] {
   --paper: #23272e; --page: #181b20; --grid: #2f353e; --ink: #ece6d6; --muted: #a39d8e;
   --pencil: #ff7b6b; --wall: #2c3038; --hatch: #4c5361; --stone: #4a4f59; --web: #b9b6c4;
-  --enemy: #a77fe0; --player: #4e9cf0; --die: #f4efe2; --card: #20242a; --line: #39404a;
+  --enemy: #a77fe0; --player: #4e9cf0; --fog: #050608; --die: #f4efe2; --card: #20242a; --line: #39404a;
   --good: #4cc483; --bad: #ff6b5e; --warn: #f0a83a; --spell: #b48ef0; --accent: #5aa7f5;
   --shadow: 0 2px 0 rgba(0, 0, 0, .4);
   color-scheme: dark;
@@ -158,10 +159,10 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .pad .pad-center.roll svg { width: 55%; height: 55%; }
 .pad .pad-center small { font-size: 12px; color: var(--muted); }
 
-.spells { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.spells { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
 .spell {
   position: relative; border: 2px solid var(--ink); background: var(--paper); border-radius: 10px; padding: 4px;
-  cursor: pointer; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; min-height: 44px;
+  cursor: pointer; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; min-height: 40px; min-width: 0;
   color: var(--spell);
 }
 .spell .icon { width: 80%; height: 80%; }
@@ -188,6 +189,8 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .badge text { fill: #fff; font-family: var(--font); font-size: 10.5px; text-anchor: middle; }
 .player use { transition: none; }
 .player.invisible { opacity: .45; }
+.fog { fill: var(--fog); }
+.player.torchlit use { filter: drop-shadow(0 0 4px #ffb347); }
 .player.noclip use { filter: drop-shadow(0 0 3px var(--spell)); }
 .arrow { cursor: pointer; }
 .arrow circle { fill: var(--accent); fill-opacity: .88; stroke: var(--ink); stroke-width: 1.8; }
@@ -332,7 +335,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
   .status { grid-area: status; font-size: 14px; min-height: 0; }
   .pad { grid-area: pad; width: 138px; gap: 4px; }
   .pad button { min-height: 40px; }
-  .spells { grid-area: spells; grid-template-columns: repeat(2, 1fr); align-content: start; }
+  .spells { grid-area: spells; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
   .spell { aspect-ratio: auto; height: 40px; min-height: 40px; }
   .spell .icon { width: 30px; height: 30px; }
 }

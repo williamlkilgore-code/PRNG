@@ -19,6 +19,7 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
 - **Treasure chest:** coin value + 1d6 per `ceil(level/20)`.
 - **Heart:** heals `ceil(level/20)`, up to max health.
 - **Med pack:** heart value + 1d4 per `ceil(level/20)`.
+- **Dark floors:** from floor 6, some floors (never two in a row, never shops) are dark. You see only the squares next to you until you light a torch, which shows 4 squares (walls block light) until the floor ends. Every dark floor has a torch you can reach without keys and a dark chest (coins plus a random spell). Torches can also be bought in the shop and carried. Seen areas stay sketched in pencil, but deeper floors remember less: items are forgotten from floor 20 and walls from floor 35. Seen stairs always stay marked.
 - **Portals:** come in color-matched pairs and appear from floor 4. Entering one moves you to its twin and you keep moving. Both ends are always in the same locked-door zone.
 - **Shops:** floor 5 is always a shop. After that a shop appears every 4–10 floors, and never more than 2 in any 10 consecutive floors. Heal and Strength +1 are always offered, plus 4 random offers from: Max Health +2, Gamble, and the spells.
   - **Gamble** results: 1–2 lose the wager, 3–4 money back, 5 money back + 2, 6 win double.
