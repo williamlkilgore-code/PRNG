@@ -25,6 +25,10 @@
     invis: { name: 'Invisibility', desc: 'Arm for one turn: pass through enemies without encountering them.' },
   };
   const SHOP_POOL = ['maxhp', 'gamble', 'noclip', 'fireball', 'luck', 'reroll', 'invis'];
+  const SHOP_IDS = ['heal', 'str', ...SHOP_POOL];
+  const PHASES = ['roll', 'choose', 'moving', 'redirect', 'levelDone', 'shop', 'dead'];
+  const OBJ_TYPES = ['coin', 'chest', 'heart', 'medpack', 'key', 'lock', 'web', 'enemy', 'portal'];
+  const OBJ_COLORS = ['gold', 'crimson', 'azure', 'emerald', 'violet', 'teal'];
 
   function randomSeedText() {
     const words = ['moss', 'grim', 'ember', 'vault', 'crypt', 'rune', 'bone', 'gloom', 'ash', 'iron', 'wyrm', 'hex'];
@@ -54,7 +58,7 @@
         },
         diceState: seedFor(seedText, 'dice'),
         dice: null, steps: 0, parity: null, halved: false,
-        usedDirs: [], move: null,
+        usedDirs: [], turnPath: [], move: null,
         armed: { noclip: false, invis: false }, invisUsed: false,
         level: null, shop: null,
         log: [],
@@ -67,9 +71,68 @@
       return g;
     }
 
+    // Returns a game, or null if `state` isn't a valid save.
     static load(state) {
-      if (!state || state.version !== 1 || !state.player) return null;
+      if (Game.validate(state)) return null;
+      if (!Array.isArray(state.turnPath)) state.turnPath = [];
       return new Game(state);
+    }
+
+    /* Checks a save's shape and value types. Saves can come from files the
+     * player imports, so every value that reaches the page is checked here.
+     * Returns null when valid, otherwise a short reason. */
+    static validate(st) {
+      const int = (v, lo, hi) => Number.isInteger(v) && v >= (lo ?? -Infinity) && v <= (hi ?? Infinity);
+      const obj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+      const fail = (why) => why;
+      if (!obj(st)) return fail('not a save file');
+      if (st.version !== 1) return fail('unsupported save version');
+      if (typeof st.seedText !== 'string' || st.seedText.length > 100) return fail('bad seed');
+      if (!int(st.seed, 0, 0xffffffff) || !int(st.diceState, 0, 0xffffffff)) return fail('bad seed');
+      if (!int(st.floor, 1, 100000) || !int(st.turn, 0) || !int(st.floorStartTurn ?? 0, 0)) return fail('bad floor or turn');
+      if (!PHASES.includes(st.phase)) return fail('bad phase');
+
+      const p = st.player;
+      if (!obj(p)) return fail('missing player');
+      if (!int(p.hp, 0) || !int(p.maxHp, 1) || p.hp > p.maxHp || !int(p.str, 0) || !int(p.coins, 0)) return fail('bad player stats');
+      if (!Array.isArray(p.keys) || !p.keys.every((k) => DC.KEY_COLORS.includes(k))) return fail('bad keys');
+      if (!obj(p.spells) || !Object.keys(SPELLS).every((k) => int(p.spells[k], 0))) return fail('bad spells');
+
+      if (st.dice !== null && !(Array.isArray(st.dice) && st.dice.length === 2 && st.dice.every((d) => int(d, 1, 6)))) return fail('bad dice');
+      if (!int(st.steps, 0, 12) || ![null, 'ortho', 'diag'].includes(st.parity ?? null)) return fail('bad roll');
+      if (!Array.isArray(st.usedDirs) || !st.usedDirs.every((d) => d in DIRS)) return fail('bad directions');
+      if (st.move !== null && !(obj(st.move) && st.move.dir in DIRS && int(st.move.stepsLeft, 0, 12))) return fail('bad move');
+      if ((st.phase === 'moving' || st.phase === 'redirect') && !st.move) return fail('bad move');
+      if (!obj(st.armed) || typeof st.armed.noclip !== 'boolean' || typeof st.armed.invis !== 'boolean') return fail('bad spells');
+      if (!Array.isArray(st.log) || !st.log.every((l) => obj(l) && typeof l.text === 'string' && /^[a-z]{1,12}$/.test(l.kind))) return fail('bad journal');
+      if (!obj(st.stats) || !['kills', 'coins', 'floorsCleared'].every((k) => int(st.stats[k], 0))) return fail('bad stats');
+
+      if (st.phase === 'levelDone') {
+        const sm = st.summary;
+        if (!obj(sm) || !int(sm.floor, 1) || !int(sm.turns, 0) || !int(sm.next, 1) || typeof sm.nextIsShop !== 'boolean') return fail('bad summary');
+      }
+      if (st.phase === 'shop') {
+        const sh = st.shop;
+        if (!obj(sh) || !Array.isArray(sh.items) || !sh.items.every((it) => obj(it) && SHOP_IDS.includes(it.id) && typeof it.sold === 'boolean')) return fail('bad shop');
+        const g = sh.lastGamble;
+        if (g != null && !(obj(g) && int(g.roll, 1, 6) && int(g.wager, 1) && int(g.delta) && typeof g.text === 'string')) return fail('bad shop');
+      } else if (st.phase !== 'dead' || st.level) {
+        const L = st.level;
+        if (!obj(L) || !int(L.w, 5, 200) || !int(L.h, 5, 200)) return fail('bad map');
+        const inB = (c) => Array.isArray(c) && c.length === 2 && int(c[0], 0, L.w - 1) && int(c[1], 0, L.h - 1);
+        const at = (o) => obj(o) && int(o.x, 0, L.w - 1) && int(o.y, 0, L.h - 1);
+        if (!Array.isArray(L.tiles) || L.tiles.length !== L.w * L.h || !L.tiles.every((t) => int(t, 0, 2))) return fail('bad map');
+        if (!at(L.start) || !at(L.stairs) || !int(p.x, 0, L.w - 1) || !int(p.y, 0, L.h - 1)) return fail('bad map');
+        if (!Array.isArray(L.objects)) return fail('bad map');
+        const ok = L.objects.every((o) => at(o) && OBJ_TYPES.includes(o.type) &&
+          (o.color === undefined || OBJ_COLORS.includes(o.color)) &&
+          (o.type !== 'enemy' || (int(o.hp) && int(o.maxHp, 1))) &&
+          (o.type !== 'portal' || (int(o.pair, 0, L.objects.length - 1) && L.objects[o.pair].type === 'portal')));
+        if (!ok) return fail('bad map objects');
+        if (!Array.isArray(L.trail) || !L.trail.length || !L.trail.every((seg) => Array.isArray(seg) && seg.length && seg.every(inB))) return fail('bad trail');
+        if (st.turnPath !== undefined && !(Array.isArray(st.turnPath) && st.turnPath.every((i) => int(i, 0, L.w * L.h - 1)))) return fail('bad trail');
+      }
+      return null;
     }
 
     // ---------------------------------------------------------------- helpers
@@ -153,10 +216,18 @@
       const steps = this.stepsLeft();
       const legal = (s.parity === 'ortho' ? ORTHO : DIAG).filter((d) => this.legalMove(d, steps));
       if (s.phase === 'choose') return legal;
-      // No doubling back on this turn's path unless it's the only way to go.
+      // No doubling back. First choice: never reverse a direction used this
+      // turn. If that leaves nothing, allow only moves onto squares not yet
+      // walked this turn. Retracing is allowed only when it is the only move.
       const back = new Set(s.usedDirs.map((d) => OPP[d]));
       const fwd = legal.filter((d) => !back.has(d));
-      return fwd.length ? fwd : legal;
+      if (fwd.length) return fwd;
+      const walked = new Set(s.turnPath || []);
+      const fresh = legal.filter((d) => {
+        const m = this.legalMove(d, steps);
+        return !walked.has(m.y * s.level.w + m.x);
+      });
+      return fresh.length ? fresh : legal;
     }
 
     // Straight-line preview of where a direction leads (stops at the first event).
@@ -180,7 +251,7 @@
     enterFloor(f) {
       const s = this.s, p = s.player;
       s.floor = f;
-      s.dice = null; s.move = null; s.usedDirs = []; s.halved = false;
+      s.dice = null; s.move = null; s.usedDirs = []; s.turnPath = []; s.halved = false;
       s.armed = { noclip: false, invis: false }; s.invisUsed = false;
       p.keys = []; p.webbed = false;
       s.floorStartTurn = s.turn;
@@ -241,7 +312,10 @@
     choose(dir) {
       const s = this.s;
       if (!this.availableDirs().includes(dir)) return false;
-      if (s.phase === 'choose') s.move = { stepsLeft: s.steps, dir };
+      if (s.phase === 'choose') {
+        s.move = { stepsLeft: s.steps, dir };
+        s.turnPath = [s.player.y * s.level.w + s.player.x];
+      }
       else s.move.dir = dir;
       s.usedDirs.push(dir);
       s.phase = 'moving';
@@ -261,6 +335,7 @@
       s.invisUsed = false;
       s.move = null;
       s.usedDirs = [];
+      s.turnPath = [];
       s.turn++;
     }
 
@@ -279,6 +354,7 @@
     moveTo(x, y, jump) {
       const p = this.s.player, L = this.s.level;
       p.x = x; p.y = y;
+      if (this.s.turnPath) this.s.turnPath.push(y * L.w + x);
       if (jump) L.trail.push([[x, y]]);
       else L.trail[L.trail.length - 1].push([x, y]);
     }

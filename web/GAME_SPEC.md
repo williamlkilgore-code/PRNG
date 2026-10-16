@@ -60,7 +60,10 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
 5. **Slide:** move one square at a time in that direction. Each square costs 1 movement point. Keep going until:
    - the points run out (the turn ends), or
    - the next square is illegal. If points remain, the player **redirects**: they pick a new legal direction of the same type and keep sliding. If no direction is legal, the turn ends.
-6. **No doubling back.** While redirecting, a direction is excluded if it is the exact opposite of *any* direction already used this turn. The exception: if every legal direction is excluded, all legal directions are allowed again (it is the only way to go).
+6. **No doubling back.** While redirecting, the options are narrowed in three tiers:
+   1. Legal directions that are not the exact opposite of *any* direction already used this turn.
+   2. If that is empty: legal directions whose next square has not been walked this turn. `state.turnPath` holds the cell indexes walked this turn, including the start square and portal arrivals.
+   3. If that is also empty: every legal direction. Retracing is the only way to go.
 7. Some events end the move early: a web, an enemy that survives, or the stairs. See 2.4.
 
 **A move into square (nx, ny) is legal when all of these hold:**
@@ -345,6 +348,7 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   diceState: <uint32>,        // dice RNG state
   dice: [d1, d2] | null, steps: 0, parity: 'ortho'|'diag', halved: false,
   usedDirs: ['E', 'S'],       // directions taken this turn
+  turnPath: [37, 38, 39],     // cell indexes (y*w+x) walked this turn; reset each turn
   move: { dir, stepsLeft } | null,
   armed: { noclip: false, invis: false }, invisUsed: false,
   level: Level | null,        // null on shop floors
@@ -437,8 +441,15 @@ Journal entries use the classes `log-<kind>`. Don't use a bare `<kind>`: the `sp
   - Arrow keys or WASD: orthogonal moves. Q, E, Z, C: diagonal moves.
   - Number pad: 8, 2, 4, 6 for orthogonal and 7, 9, 1, 3 for diagonal.
   - Esc: cancel Fireball targeting or close a modal.
+- **Saving.**
+  - Auto-save: the whole `game.s` is written after every action.
+  - **Saves** menu (`showSaves`): up to 12 named slots in the browser, each storing `{id, name, savedAt, meta, state}`. It has Save, Load, Overwrite and Delete (Delete asks to confirm). Saving is disabled while moving or after death.
+  - Export downloads `{app: 'dice-delve', version: 1, savedAt, state}` as `.json`. Import accepts that wrapper or a bare state.
+  - Every load (auto-save, slot or file) goes through `Game.load`, which calls `Game.validate(state)`. `validate` checks every field's type and range, including enums for phases, object types, colors and journal kinds. Values from a save end up in the page's HTML, so a file that fails validation is refused with a reason.
+  - When a state is changed in a new way, extend `Game.validate` to match, or valid saves will be refused.
 - **Storage keys.**
   - `dicedelve-save-v1`: the game state. Deleted when the player dies.
+  - `dicedelve-slots-v1`: the save slots.
   - `dicedelve-best-v1`: the deepest floor reached.
   - `dicedelve-theme`
   - Every storage call is wrapped in try/catch, so the game still runs when storage is blocked.

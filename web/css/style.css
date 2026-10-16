@@ -230,6 +230,19 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 .die-btn { background: none; border: 2px solid var(--ink); border-radius: 12px; padding: 6px; cursor: pointer; }
 .die-btn:hover { background: var(--paper); }
 
+.modal .slots { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.slot { border: 2px solid var(--ink); border-radius: 10px; background: var(--paper); padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.slot-info { flex: 1 1 200px; display: flex; flex-direction: column; min-width: 0; }
+.slot-name { font-size: 19px; overflow-wrap: anywhere; }
+.slot-info .muted { font-size: 15px; }
+.slot-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.slot-actions .btn { min-height: 38px; padding: 4px 10px; font-size: 16px; }
+.btn.danger { background: var(--bad); color: #fff; }
+.save-row { display: flex; gap: 8px; }
+.save-row input { flex: 1; min-width: 0; }
+.notice { border: 2px dashed var(--good); border-radius: 8px; padding: 6px 10px; color: var(--good); }
+.notice.bad { border-color: var(--bad); color: var(--bad); }
+
 /* ---------------------------------------------------------------- mobile */
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; padding: 10px 16px; gap: 10px; }

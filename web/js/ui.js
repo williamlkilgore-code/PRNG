@@ -5,6 +5,8 @@
   const RD = DC.render;
   const $ = (sel) => document.querySelector(sel);
   const SAVE_KEY = 'dicedelve-save-v1';
+  const SLOTS_KEY = 'dicedelve-slots-v1';
+  const MAX_SLOTS = 12;
   const BEST_KEY = 'dicedelve-best-v1';
   const THEME_KEY = 'dicedelve-theme';
   const PAD_ORDER = ['NW', 'N', 'NE', 'W', null, 'E', 'SW', 'S', 'SE'];
@@ -22,7 +24,7 @@
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } },
+    set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
     del(k) { try { localStorage.removeItem(k); } catch (e) { /* storage unavailable */ } },
   };
   const save = () => { if (game) store.set(SAVE_KEY, JSON.stringify(game.s)); };
@@ -142,6 +144,11 @@
   // ------------------------------------------------------------------- input
   async function choose(dir) {
     if (ui.busy || ui.targeting || !game.choose(dir)) return;
+    runMove();
+  }
+
+  // Animate the current move step by step until it stops.
+  async function runMove() {
     ui.preview = null;
     ui.busy = true;
     render();
@@ -193,6 +200,7 @@
     $('#passBtn').addEventListener('click', () => { if (game.passTurn()) { render(); save(); } });
     $('#helpBtn').addEventListener('click', () => showHelp());
     $('#menuBtn').addEventListener('click', () => showStart(true));
+    $('#savesBtn').addEventListener('click', () => { if (!ui.busy) showSaves(); });
     $('#themeBtn').addEventListener('click', toggleTheme);
 
     const board = $('#board');
@@ -275,14 +283,16 @@
       <div class="row">
         ${saved && !fromMenu ? '<button class="btn primary" id="continueBtn" type="button">Continue</button>' : ''}
         <button class="btn ${saved && !fromMenu ? '' : 'primary'}" id="newBtn" type="button">New game</button>
+        <button class="btn" id="loadBtn" type="button">Load game</button>
         <button class="btn" id="rulesBtn" type="button">Rules</button>
         ${fromMenu && game ? '<button class="btn" type="button" data-close>Cancel</button>' : ''}
       </div>`, !!(fromMenu && game));
     const cont = $('#continueBtn');
     if (cont) cont.addEventListener('click', () => {
-      const g = Game.load(JSON.parse(saved));
+      const g = Game.load(parseJson(saved));
       if (g) { startWith(g); } else { store.del(SAVE_KEY); showStart(); }
     });
+    $('#loadBtn').addEventListener('click', () => showSaves(() => showStart(fromMenu)));
     $('#newBtn').addEventListener('click', () => startWith(Game.create($('#seedInput').value)));
     $('#seedInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') startWith(Game.create(e.target.value)); });
     $('#rulesBtn').addEventListener('click', () => showHelp(() => showStart(fromMenu)));
@@ -294,7 +304,116 @@
     closeModal();
     render();
     save();
-    afterPhase();
+    if (game.s.phase === 'moving') runMove();
+    else afterPhase();
+  }
+
+  // --------------------------------------------------------------- save slots
+  function parseJson(text) { try { return JSON.parse(text); } catch (e) { return null; } }
+  function readSlots() {
+    const list = parseJson(store.get(SLOTS_KEY) || '[]');
+    return Array.isArray(list) ? list.filter((sl) => sl && typeof sl.id === 'string' && sl.state) : [];
+  }
+  const writeSlots = (list) => store.set(SLOTS_KEY, JSON.stringify(list));
+  const canSaveNow = () => game && !ui.busy && game.s.phase !== 'dead' && game.s.phase !== 'moving';
+  const defaultName = () => `Floor ${game.s.floor} · ${game.s.seedText}`;
+  const slotMeta = (st) => ({ floor: st.floor, hp: st.player.hp, maxHp: st.player.maxHp, coins: st.player.coins, seedText: st.seedText });
+  const when = (t) => { try { return new Date(t).toLocaleString(); } catch (e) { return ''; } };
+
+  function showSaves(back, message) {
+    const slots = readSlots().sort((a, b) => b.savedAt - a.savedAt);
+    const canSave = canSaveNow();
+    const rows = slots.map((sl) => {
+      const m = sl.meta || {};
+      return `<li class="slot">
+        <div class="slot-info"><span class="slot-name">${esc(String(sl.name || 'Save'))}</span>
+          <span class="muted">Floor ${esc(String(m.floor))} · ${esc(String(m.hp))}/${esc(String(m.maxHp))} hp · ${esc(String(m.coins))} coins · ${esc(when(sl.savedAt))}</span></div>
+        <div class="slot-actions">
+          <button class="btn" type="button" data-slot-load="${esc(sl.id)}">Load</button>
+          ${canSave ? `<button class="btn" type="button" data-slot-over="${esc(sl.id)}">Overwrite</button>` : ''}
+          <button class="btn" type="button" data-slot-del="${esc(sl.id)}">Delete</button>
+        </div></li>`;
+    }).join('');
+    openModal(`
+      <h2>Saved games</h2>
+      ${message ? `<p class="notice ${message.bad ? 'bad' : ''}">${esc(message.text)}</p>` : ''}
+      ${canSave ? `<h3>Save this game</h3>
+        <div class="save-row"><input type="text" id="slotName" maxlength="40" value="${esc(defaultName())}" aria-label="Save name">
+        <button class="btn primary" type="button" id="slotSave">Save</button></div>` : ''}
+      <h3>Save slots <span class="muted">(${slots.length}/${MAX_SLOTS}, stored in this browser)</span></h3>
+      ${rows ? `<ul class="slots">${rows}</ul>` : '<p class="muted">No saved games yet.</p>'}
+      <h3>Save file</h3>
+      <p class="muted">Download a save file to back it up or move it to another browser or device.</p>
+      <div class="row">
+        ${game && game.s.phase !== 'dead' ? '<button class="btn" type="button" id="exportBtn">Export current game</button>' : ''}
+        <button class="btn" type="button" id="importBtn">Import save file</button>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
+      </div>
+      <div class="row"><button class="btn" type="button" id="savesBack">${back ? 'Back' : 'Close'}</button></div>`, !back);
+
+    const body = $('#modalBody');
+    const again = (text, bad) => showSaves(back, { text, bad });
+    $('#savesBack').addEventListener('click', () => (back ? back() : closeModal()));
+
+    const saveTo = (id, name) => {
+      const list = readSlots();
+      const i = list.findIndex((sl) => sl.id === id);
+      if (i < 0 && list.length >= MAX_SLOTS) return again(`All ${MAX_SLOTS} slots are full. Overwrite or delete one first.`, true);
+      const entry = { id, name, savedAt: Date.now(), meta: slotMeta(game.s), state: JSON.parse(JSON.stringify(game.s)) };
+      if (i >= 0) list[i] = entry; else list.push(entry);
+      if (!writeSlots(list)) return again('Could not save: browser storage is full or blocked. Use Export instead.', true);
+      again(`Saved "${name}".`);
+    };
+    if (canSave) {
+      const doSave = () => saveTo(`s${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`,
+        $('#slotName').value.trim() || defaultName());
+      $('#slotSave').addEventListener('click', doSave);
+      $('#slotName').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); });
+    }
+    body.querySelectorAll('[data-slot-load]').forEach((b) => b.addEventListener('click', () => {
+      const sl = readSlots().find((x) => x.id === b.dataset.slotLoad);
+      const g = sl && Game.load(JSON.parse(JSON.stringify(sl.state)));
+      if (g) startWith(g); else again('That save is damaged and could not be loaded.', true);
+    }));
+    body.querySelectorAll('[data-slot-over]').forEach((b) => b.addEventListener('click', () => {
+      const sl = readSlots().find((x) => x.id === b.dataset.slotOver);
+      if (sl) saveTo(sl.id, sl.name);
+    }));
+    body.querySelectorAll('[data-slot-del]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Confirm delete'; b.classList.add('danger'); return; }
+      writeSlots(readSlots().filter((x) => x.id !== b.dataset.slotDel));
+      again('Save deleted.');
+    }));
+
+    const exp = $('#exportBtn');
+    if (exp) exp.addEventListener('click', () => {
+      const file = { app: 'dice-delve', version: 1, savedAt: new Date().toISOString(), state: game.s };
+      const blob = new Blob([JSON.stringify(file)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `dice-delve-floor-${game.s.floor}-${game.s.seedText.replace(/[^a-z0-9-]+/gi, '_')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+    const fileInput = $('#importFile');
+    $('#importBtn').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      if (f.size > 2e6) return again('That file is too large to be a save file.', true);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const data = parseJson(String(reader.result));
+        const state = data && data.app === 'dice-delve' ? data.state : data;
+        const why = Game.validate(state);
+        if (why) return again(`That file isn't a valid Dice Delve save (${why}).`, true);
+        startWith(Game.load(state));
+      };
+      reader.onerror = () => again('Could not read that file.', true);
+      reader.readAsText(f);
+    });
   }
 
   function showHelp(back) {
@@ -306,7 +425,7 @@
       <ul>
         <li>Roll 2 dice. The total is how many squares you move.</li>
         <li><b>Even</b> total: move orthogonally (↑ ↓ ← →). <b>Odd</b> total: move diagonally.</li>
-        <li>Pick a direction and you keep going that way until your moves run out. If you're blocked with moves left, pick a new legal direction. You can't double back on this turn's path unless it's the only move.</li>
+        <li>Pick a direction and you keep going that way until your moves run out. If you're blocked with moves left, pick a new legal direction. You can't reverse a direction you've used this turn. If that leaves no move, you may only step onto squares you haven't walked this turn. Retracing your path is allowed only when it's the only move.</li>
         <li>Reach the staircase to descend. Your pencil trail shows where you've been.</li>
       </ul>
       <h3>Map key</h3>
@@ -331,6 +450,8 @@
       </div>
       <h3>Controls</h3>
       <p class="muted">Tap the arrows on the map or the direction pad. Space/Enter: roll · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too.</p>
+      <h3>Saving</h3>
+      <p>Your game auto-saves after every move, so Continue picks up where you left off. Use <b>Saves</b> to keep named saves in this browser, or to export a save file and import it on another device.</p>
       <div class="row"><button class="btn primary" type="button" id="helpClose">Got it</button></div>`, !back);
     $('#helpClose').addEventListener('click', () => (back ? back() : closeModal()));
   }
@@ -480,7 +601,7 @@
     setupInput();
     const saved = store.get(SAVE_KEY);
     let g = null;
-    try { g = saved ? Game.load(JSON.parse(saved)) : null; } catch (e) { g = null; }
+    g = saved ? Game.load(parseJson(saved)) : null;
     if (g) {
       game = g;
       render();

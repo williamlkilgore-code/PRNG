@@ -178,6 +178,43 @@ test('blocked: redirect, no doubling back unless only move', () => {
   ok(h.s.phase === 'redirect' && h.availableDirs().join() === 'W', 'only reverse remains, so it is allowed');
 });
 
+test('diagonal redirect avoids retracing this turn\'s path', () => {
+  const g = sandbox([
+    '#########',
+    '#>......#',
+    '#.......#',
+    '#.......#',
+    '#..@....#',
+    '#########',
+  ]);
+  forceRoll(g, 3, 4); // 7 diagonal
+  g.choose('NE'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.player.x === 6 && g.s.player.y === 1, 'blocked by top wall');
+  g.choose('SE'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.player.x === 7 && g.s.player.y === 2, 'blocked by side wall');
+  ok(g.availableDirs().join() === 'SW', 'only SW (fresh squares) offered, not NW (retraces): ' + g.availableDirs());
+  ok(!g.choose('NW'), 'NW refused');
+});
+
+test('save validation', () => {
+  const g = Game.create('valid');
+  const clone = () => JSON.parse(JSON.stringify(g.s));
+  ok(Game.validate(clone()) === null, 'fresh game is valid');
+  ok(Game.load(clone()) instanceof Game, 'loads');
+  const bad = [
+    (st) => { st.player.x = '<img src=x onerror=alert(1)>'; },
+    (st) => { st.log.push({ text: 'x', kind: 'a" onclick="x' }); },
+    (st) => { st.level.objects.push({ type: 'coin', x: 1, y: 1, color: 'red;background:url(x)' }); },
+    (st) => { st.level.objects.push({ type: 'script', x: 1, y: 1 }); },
+    (st) => { st.player.hp = 99; },
+    (st) => { st.floor = 'ten'; },
+    (st) => { st.version = 2; },
+    (st) => { st.level.tiles.pop(); },
+  ];
+  bad.forEach((mut, i) => { const st = clone(); mut(st); ok(Game.validate(st) !== null && Game.load(st) === null, 'tampered save ' + i + ' accepted'); });
+  ok(Game.load(null) === null && Game.load('x') === null, 'junk rejected');
+});
+
 test('web stops and halves next move', () => {
   const g = sandbox(['#########', '#@......#', '#......>#', '#########'], [{ type: 'web', x: 3, y: 1 }]);
   forceRoll(g, 3, 3);
@@ -314,7 +351,8 @@ test('random play simulation', () => {
       ok(false, 'unexpected phase ' + s.phase);
       break;
     }
-    JSON.parse(JSON.stringify(g.s));
+    const why = Game.validate(JSON.parse(JSON.stringify(g.s)));
+    ok(!why, 'saved state fails validation: ' + why);
   }
   console.log(`     (simulated ${floors} floor transitions, ${deaths} deaths)`);
   ok(floors > 50, 'random play makes progress');
