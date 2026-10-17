@@ -218,12 +218,9 @@
       const steps = this.stepsLeft();
       const legal = (s.parity === 'ortho' ? ORTHO : DIAG).filter((d) => this.legalMove(d, steps));
       if (s.phase === 'choose') return legal;
-      // No doubling back. First choice: never reverse a direction used this
-      // turn. If that leaves nothing, allow only moves onto squares not yet
-      // walked this turn. Retracing is allowed only when it is the only move.
-      const back = new Set(s.usedDirs.map((d) => OPP[d]));
-      const fwd = legal.filter((d) => !back.has(d));
-      if (fwd.length) return fwd;
+      // No doubling back: a direction is offered only if its next square
+      // hasn't been walked this turn. Retracing is allowed only when every
+      // legal move would retrace.
       const walked = new Set(s.turnPath || []);
       const fresh = legal.filter((d) => {
         const m = this.legalMove(d, steps);

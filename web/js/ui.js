@@ -195,7 +195,7 @@
         return `Tap the map in a ${s.parity === 'ortho' ? 'straight (orthogonal)' : 'diagonal'} direction. You keep going until your ${s.steps} moves run out or you're blocked.`;
       }
       case 'moving': return 'Moving…';
-      case 'redirect': return `Blocked with ${s.move.stepsLeft} move${s.move.stepsLeft > 1 ? 's' : ''} left. Choose a new direction (no doubling back unless it's the only way).`;
+      case 'redirect': return `Blocked with ${s.move.stepsLeft} move${s.move.stepsLeft > 1 ? 's' : ''} left. Choose a new direction (not back over squares you've walked this turn, unless that's the only way).`;
       case 'levelDone': return 'Floor cleared!';
       case 'shop': return 'Welcome to the shop.';
       case 'dead': return 'You have fallen.';
@@ -584,7 +584,7 @@
       <ul>
         <li>Roll 2 dice. The total is how many squares you move.</li>
         <li><b>Even</b> total: move orthogonally (↑ ↓ ← →). <b>Odd</b> total: move diagonally.</li>
-        <li>Pick a direction and you keep going that way until your moves run out. If you're blocked with moves left, pick a new legal direction. You can't reverse a direction you've used this turn. If that leaves no move, you may only step onto squares you haven't walked this turn. Retracing your path is allowed only when it's the only move.</li>
+        <li>Pick a direction and you keep going that way until your moves run out. If you're blocked with moves left, pick a new legal direction. You can't step back onto a square you've already walked this turn, unless that's the only legal move.</li>
         <li>Reach the staircase to descend. Your pencil trail shows where you've been.</li>
       </ul>
       <h3>Map key</h3>

@@ -10,7 +10,7 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
 
 ## Rules implemented
 
-- **Movement:** roll 2d6. The total is how many squares you move. An even total moves orthogonally and an odd total moves diagonally. Once you pick a direction you keep going until your moves run out. If you're blocked with moves left, you pick a new legal direction. You can't reverse a direction already used this turn. If that leaves no move, you may only step onto squares you haven't walked this turn, and retracing is allowed only when it is the only move. Diagonal moves can't squeeze between two walls that meet at a corner.
+- **Movement:** roll 2d6. The total is how many squares you move. An even total moves orthogonally and an odd total moves diagonally. Once you pick a direction you keep going until your moves run out. If you're blocked with moves left, you pick a new legal direction. The new direction can't step onto a square you've already walked this turn, unless every legal move would. Diagonal moves can't squeeze between two walls that meet at a corner.
 - **Floors:** grow from 17×13 to at most 21×15. Rooms are at least 3×3 and joined by one-cell doorways. The start square is a smiley face. Stepping onto the staircase ends the floor.
 - **Spider web:** stops movement at once, and the next roll's movement is halved (rounded down, minimum 1). The roll's parity still decides orthogonal or diagonal.
 - **Enemy:** when you run into one, it deals `floor(level/20 + 1)` damage and you hit it for your strength. Enemies have `floor(level/10 + 1)` health. If you kill it, you move into its square and keep going. If it survives, your move ends.

@@ -273,6 +273,29 @@ test('checkpoint validation', () => {
   ok(Game.fromSave(null).error && Game.fromSave('x').error && Game.fromSave([]).error, 'junk rejected');
 });
 
+test('redirect checks walked squares, not directions', () => {
+  // Odd roll: NE into the right wall, NW into the top wall. NE (a doorway)
+  // and SW are both onto fresh squares, so both are offered; SE retraces.
+  const g = sandbox([
+    '#####D##D##',
+    '#.........#',
+    '#.........#',
+    '#.........#',
+    '#.........#',
+    '#......@..#',
+    '###########',
+    '#>........#',
+    '###########',
+  ]);
+  forceRoll(g, 4, 5);
+  g.choose('NE'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.player.x === 9 && g.s.player.y === 3, 'blocked by right wall');
+  g.choose('NW'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.player.x === 7 && g.s.player.y === 1, 'blocked by top wall');
+  ok(g.availableDirs().sort().join() === 'NE,SW', 'NE and SW offered, SE refused: ' + g.availableDirs());
+  ok(!g.choose('SE'), 'SE retraces and is refused');
+});
+
 test('web stops and halves next move', () => {
   const g = sandbox(['#########', '#@......#', '#......>#', '#########'], [{ type: 'web', x: 3, y: 1 }]);
   forceRoll(g, 3, 3);

@@ -60,10 +60,10 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
 5. **Slide:** move one square at a time in that direction. Each square costs 1 movement point. Keep going until:
    - the points run out (the turn ends), or
    - the next square is illegal. If points remain, the player **redirects**: they pick a new legal direction of the same type and keep sliding. If no direction is legal, the turn ends.
-6. **No doubling back.** While redirecting, the options are narrowed in three tiers:
-   1. Legal directions that are not the exact opposite of *any* direction already used this turn.
-   2. If that is empty: legal directions whose next square has not been walked this turn. `state.turnPath` holds the cell indexes walked this turn, including the start square and portal arrivals.
-   3. If that is also empty: every legal direction. Retracing is the only way to go.
+6. **No doubling back.** While redirecting, a legal direction is offered only if its next square has not been walked this turn. For a No Clipping move, that means the landing square.
+   - `state.turnPath` holds the cell indexes walked this turn, including the start square and portal arrivals.
+   - If every legal direction would step onto a walked square, all legal directions are offered. Retracing is the only way to go.
+   - Directions are not compared at all. Only squares count, so reversing an earlier leg is fine if it heads onto fresh squares.
 7. Some events end the move early: a web, an enemy that survives, or the stairs. See 2.4.
 
 **A move into square (nx, ny) is legal when all of these hold:**
