@@ -61,7 +61,7 @@
         },
         diceState: 0,
         dice: null, steps: 0, parity: null, halved: false,
-        usedDirs: [], turnPath: [], move: null,
+        usedDirs: [], move: null,
         armed: { noclip: false, invis: false }, invisUsed: false,
         declinedPicks: [], pickTarget: -1,
         level: null, shop: null,
@@ -250,15 +250,11 @@
       const steps = this.stepsLeft();
       const legal = (s.parity === 'ortho' ? ORTHO : DIAG).filter((d) => this.legalMove(d, steps));
       if (s.phase === 'choose') return legal;
-      // No doubling back: a direction is offered only if its next square
-      // hasn't been walked this turn. Retracing is allowed only when every
-      // legal move would retrace.
-      const walked = new Set(s.turnPath || []);
-      const fresh = legal.filter((d) => {
-        const m = this.legalMove(d, steps);
-        return !walked.has(m.y * s.level.w + m.x);
-      });
-      return fresh.length ? fresh : legal;
+      // No doubling back: the only extra rule is that you can't turn straight
+      // back the way you were just moving, unless that's the only legal move.
+      const back = OPP[s.move.dir];
+      const fwd = legal.filter((d) => d !== back);
+      return fwd.length ? fwd : legal;
     }
 
     // Straight-line preview of where a direction leads (stops at the first event).
@@ -283,7 +279,7 @@
     enterFloor(f) {
       const s = this.s, p = s.player;
       s.floor = f;
-      s.dice = null; s.move = null; s.usedDirs = []; s.turnPath = []; s.halved = false;
+      s.dice = null; s.move = null; s.usedDirs = []; s.halved = false;
       s.armed = { noclip: false, invis: false }; s.invisUsed = false;
       s.declinedPicks = []; s.pickTarget = -1;
       p.keys = []; p.webbed = false;
@@ -410,10 +406,7 @@
     choose(dir) {
       const s = this.s;
       if (!this.availableDirs().includes(dir)) return false;
-      if (s.phase === 'choose') {
-        s.move = { stepsLeft: s.steps, dir };
-        s.turnPath = [s.player.y * s.level.w + s.player.x];
-      }
+      if (s.phase === 'choose') s.move = { stepsLeft: s.steps, dir };
       else s.move.dir = dir;
       s.usedDirs.push(dir);
       s.phase = 'moving';
@@ -433,7 +426,6 @@
       s.invisUsed = false;
       s.move = null;
       s.usedDirs = [];
-      s.turnPath = [];
       s.declinedPicks = [];
       s.pickTarget = -1;
       s.turn++;
@@ -456,7 +448,6 @@
     moveTo(x, y, jump) {
       const p = this.s.player, L = this.s.level;
       p.x = x; p.y = y;
-      if (this.s.turnPath) this.s.turnPath.push(y * L.w + x);
       if (jump) L.trail.push([[x, y]]);
       else L.trail[L.trail.length - 1].push([x, y]);
       this.updateVision();

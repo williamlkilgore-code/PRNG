@@ -214,7 +214,7 @@ test('blocked: redirect, no doubling back unless only move', () => {
   ok(h.s.phase === 'redirect' && h.availableDirs().join() === 'W', 'only reverse remains, so it is allowed');
 });
 
-test('diagonal redirect avoids retracing this turn\'s path', () => {
+test('diagonal redirect never turns straight back', () => {
   const g = sandbox([
     '#########',
     '#>......#',
@@ -308,7 +308,31 @@ test('checkpoint validation', () => {
   ok(Game.fromSave(null).error && Game.fromSave('x').error && Game.fromSave([]).error, 'junk rejected');
 });
 
-test('redirect checks walked squares, not directions', () => {
+test('redirect: a full circuit still cannot turn straight back', () => {
+  // 3x3 room, roll 10 straight: E, S, W, N around the room and back to the
+  // start with 2 moves left. Only E is offered; S (straight back) is not.
+  const g = sandbox([
+    '#####',
+    '#@..#',
+    '#...#',
+    '#...#',
+    '#####',
+    '#>..#',
+    '#####',
+  ]);
+  forceRoll(g, 4, 6);
+  g.choose('E'); run(g);
+  ok(g.availableDirs().join() === 'S', 'after E: only S');
+  g.choose('S'); run(g);
+  ok(g.availableDirs().join() === 'W', 'after S: only W');
+  g.choose('W'); run(g);
+  ok(g.availableDirs().join() === 'N', 'after W: only N');
+  g.choose('N'); run(g);
+  ok(g.s.player.x === 1 && g.s.player.y === 1 && g.s.move.stepsLeft === 2, 'back at the start with 2 moves');
+  ok(g.availableDirs().join() === 'E' && !g.choose('S'), 'circuit done: E only, never straight back S: ' + g.availableDirs());
+});
+
+test('redirect allows any legal direction except straight back', () => {
   // Odd roll: NE into the right wall, NW into the top wall. NE (a doorway)
   // and SW are both onto fresh squares, so both are offered; SE retraces.
   const g = sandbox([

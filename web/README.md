@@ -10,7 +10,7 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
 
 ## Rules implemented
 
-- **Movement:** roll 2d6. The total is how many squares you move. An even total moves orthogonally and an odd total moves diagonally. Once you pick a direction you keep going until your moves run out. If you're blocked with moves left, you pick a new legal direction. The new direction can't step onto a square you've already walked this turn, unless every legal move would. Diagonal moves can't squeeze between two walls that meet at a corner.
+- **Movement:** roll 2d6. The total is how many squares you move. An even total moves orthogonally and an odd total moves diagonally. Once you pick a direction you keep going until your moves run out. If you're blocked with moves left, you pick a new legal direction. The only direction you can't pick is straight back the way you came, unless that's the only legal move. Diagonal moves can't squeeze between two walls that meet at a corner.
 - **Tutorial:** floors 1–3 teach the game. Floor 1 is a single 5×5 room. Floor 2 is two rooms with webs. Floor 3 is a small four-room dungeon with every feature except portals. One-time hint pop-ups explain each new thing; turn them off from the pop-up or the Rules screen. Skip the tutorial with the checkbox on the New game screen.
 - **Floors:** from floor 4, floors grow from 17×13 to at most 21×15. Rooms are at least 3×3 and joined by one-cell doorways. The start square is a smiley face. Stepping onto the staircase ends the floor.
 - **Spider web:** stops movement at once, and the next roll's movement is halved (rounded down, minimum 1). The roll's parity still decides orthogonal or diagonal.

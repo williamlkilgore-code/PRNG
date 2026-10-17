@@ -64,10 +64,9 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
 5. **Slide:** move one square at a time in that direction. Each square costs 1 movement point. Keep going until:
    - the points run out (the turn ends), or
    - the next square is illegal. If points remain, the player **redirects**: they pick a new legal direction of the same type and keep sliding. If no direction is legal, the turn ends.
-6. **No doubling back.** While redirecting, a legal direction is offered only if its next square has not been walked this turn. For a No Clipping move, that means the landing square.
-   - `state.turnPath` holds the cell indexes walked this turn, including the start square and portal arrivals.
-   - If every legal direction would step onto a walked square, all legal directions are offered. Retracing is the only way to go.
-   - Directions are not compared at all. Only squares count, so reversing an earlier leg is fine if it heads onto fresh squares.
+6. **No doubling back.** While redirecting, every legal direction is offered except the exact reverse of the direction you were just moving in (`OPP[move.dir]`). That reverse is offered only when it's the only legal move.
+   - Squares already walked this turn don't matter. For example, after a full lap around a room, you still can't turn straight back.
+   - Walls and locked doors are already excluded by `legalMove`.
 7. Some events end the move early: a web, an enemy that survives, or the stairs. See 2.4.
 
 **A move into square (nx, ny) is legal when all of these hold:**
@@ -406,7 +405,6 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   diceState: <uint32>,        // dice RNG state
   dice: [d1, d2] | null, steps: 0, parity: 'ortho'|'diag', halved: false,
   usedDirs: ['E', 'S'],       // directions taken this turn
-  turnPath: [37, 38, 39],     // cell indexes (y*w+x) walked this turn; reset each turn
   move: { dir, stepsLeft } | null,
   armed: { noclip: false, invis: false }, invisUsed: false,
   level: Level | null,        // null on shop floors

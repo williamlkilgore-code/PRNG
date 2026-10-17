@@ -114,7 +114,7 @@
     start: { icon: 'i-start', title: 'Welcome to the dungeon', text: 'Tap <b>Roll</b> in the middle of the direction pad. The two dice add up to how many squares you move. Reach the <b>staircase</b> to finish the floor.' },
     even: { icon: 'i-sp-reroll', title: 'Even roll: move straight', text: 'An even total moves you up, down, left or right. Tap the map in the direction you want to go (or use the pad). You keep sliding until your moves run out.' },
     odd: { icon: 'i-sp-reroll', title: 'Odd roll: move diagonally', text: 'An odd total moves you diagonally. Tap the map toward the corner you want. You keep sliding until your moves run out.' },
-    blocked: { icon: 'i-stairs', title: 'Blocked!', text: "You hit something with moves left. Pick a new direction to keep going. You can't step back onto squares you walked this turn, unless that's the only way." },
+    blocked: { icon: 'i-stairs', title: 'Blocked!', text: "You hit something with moves left. Pick a new direction to keep going. You can't turn straight back the way you came, unless that's the only way." },
     doorway: { icon: 'i-door-open', title: 'Doorways', text: 'Rooms are joined by gaps in the wall. Slide through a doorway to reach the next room.' },
     web: { icon: 'i-web', title: 'Spider webs', text: 'Running into a web stops you on the spot, and your <b>next</b> move is halved. Steer around them when you can.' },
     enemy: { icon: 'i-enemy', title: 'Enemies', text: "When you run into an enemy it hits you, and you hit back with your strength. Kill it and you keep moving; if it survives, your move ends. The red number is its health." },
@@ -331,7 +331,7 @@
         return `Tap the map in a ${s.parity === 'ortho' ? 'straight (orthogonal)' : 'diagonal'} direction. You keep going until your ${s.steps} moves run out or you're blocked.`;
       }
       case 'moving': return 'Moving…';
-      case 'redirect': return `Blocked with ${s.move.stepsLeft} move${s.move.stepsLeft > 1 ? 's' : ''} left. Choose a new direction (not back over squares you've walked this turn, unless that's the only way).`;
+      case 'redirect': return `Blocked with ${s.move.stepsLeft} move${s.move.stepsLeft > 1 ? 's' : ''} left. Choose a new direction (not straight back the way you came, unless that's the only way).`;
       case 'levelDone': return 'Floor cleared!';
       case 'shop': return 'Welcome to the shop.';
       case 'dead': return 'You have fallen.';
@@ -798,7 +798,7 @@
       <ul>
         <li>Roll 2 dice. The total is how many squares you move.</li>
         <li><b>Even</b> total: move orthogonally (↑ ↓ ← →). <b>Odd</b> total: move diagonally.</li>
-        <li>Pick a direction and you keep going that way until your moves run out. If you're blocked with moves left, pick a new legal direction. You can't step back onto a square you've already walked this turn, unless that's the only legal move.</li>
+        <li>Pick a direction and you keep going that way until your moves run out. If you're blocked with moves left, pick a new legal direction. The only direction you can't pick is straight back the way you came, unless that's the only legal move.</li>
         <li>Reach the staircase to descend. Your pencil trail shows where you've been.</li>
       </ul>
       <h3>Map key</h3>
