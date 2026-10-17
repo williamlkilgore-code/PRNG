@@ -60,6 +60,36 @@
     <path d="M16 6.5C13.6 9.3 13.8 11.6 16 12.3C18.2 11.6 18.4 9.3 16 6.5Z" style="fill:#ffd23f"/>
   </symbol>
 
+  <symbol id="i-stalker" viewBox="0 0 32 32">
+    <path d="M6 28Q6.5 12 16 5Q25.5 12 26 28L21.5 25.5L16 28L10.5 25.5Z" style="fill:#3b3350;${ink}" stroke-width="1.8"/>
+    <path d="M10.5 16Q16 10 21.5 16Q21 22 16 23Q11 22 10.5 16Z" style="fill:#15121c;stroke:var(--ink)" stroke-width="1"/>
+    <path d="M12.3 16.6l2.6 1M19.7 16.6l-2.6 1" style="fill:none;stroke:#ff4d3d;stroke-linecap:round" stroke-width="2.2"/>
+  </symbol>
+
+  <symbol id="i-body" viewBox="0 0 32 32">
+    <path d="M6 24Q8 19 13 20L19 18Q25 17 27 22Q26 26 17 26Q8 27 6 24Z" style="fill:#b9b3c4;${ink}" stroke-width="1.6"/>
+    <path d="M10 21.5l2 2M12 21.5l-2 2M15 20.5l2 2M17 20.5l-2 2" style="fill:none;${ink}" stroke-width="1.3"/>
+    <circle cx="22" cy="11" r="2.6" style="fill:#8f8a7c;${ink}" stroke-width="1.2"/>
+    <circle cx="26.5" cy="14" r="2.1" style="fill:#a5a093;${ink}" stroke-width="1.2"/>
+  </symbol>
+
+  <symbol id="i-sling" viewBox="0 0 32 32">
+    <path d="M16 29V17M16 17L9 6M16 17L23 6" style="fill:none;stroke:#8a5a2b;stroke-linecap:round;stroke-linejoin:round" stroke-width="3.4"/>
+    <path d="M9 6Q16 14 23 6" style="fill:none;stroke:currentColor;stroke-linecap:round" stroke-width="1.8"/>
+    <circle cx="16" cy="10" r="2.6" style="fill:#8f8a7c;${ink}" stroke-width="1.2"/>
+  </symbol>
+
+  <symbol id="i-lockpick" viewBox="0 0 32 32">
+    <circle cx="9" cy="23" r="5" style="fill:#c9ccd3;${ink}" stroke-width="1.8"/>
+    <circle cx="9" cy="23" r="1.8" style="fill:var(--paper);stroke:var(--ink)" stroke-width="1"/>
+    <path d="M12.5 19.5L25 7L27 9M22 10l2 2" style="fill:none;${ink}" stroke-width="2.2"/>
+  </symbol>
+
+  <symbol id="i-sp-dex" viewBox="0 0 32 32">
+    <path d="M11 28V14Q11 12 13 12Q15 12 15 14V9Q15 7 17 7Q19 7 19 9V14V11Q19 9 21 9Q23 9 23 11V15V13Q23 11.5 24.5 11.5Q26 11.5 26 13V20Q26 28 18 28Z" style="fill:#f1c9a5;${ink}" stroke-width="1.6"/>
+    <path d="M6 9l2-4 2 4M4.5 14H9" style="fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round" stroke-width="1.8"/>
+  </symbol>
+
   <symbol id="i-moon" viewBox="0 0 32 32">
     <path d="M20 4.5A11.5 11.5 0 1 0 27.5 24A9.5 9.5 0 0 1 20 4.5Z" style="fill:#c9b6ff;${ink}" stroke-width="1.8"/>
     <circle cx="24" cy="9" r="1.2" style="fill:var(--ink)"/><circle cx="27.5" cy="14" r=".9" style="fill:var(--ink)"/>
@@ -215,7 +245,7 @@
 
   function objectSvg(o, i) {
     const color = COLORS[o.color] ? ` style="color:${COLORS[o.color]}"` : '';
-    let sym = 'i-' + o.type;
+    let sym = o.type === 'enemy' && o.stalker ? 'i-stalker' : 'i-' + o.type;
     if (o.type === 'lock' && o.done) sym = 'i-door-open';
     let out = use(sym, o.x, o.y, color);
     if (o.type === 'enemy' && !o.done && o.maxHp > 1) {
@@ -275,6 +305,12 @@
         const o = L.objects[i];
         out += `<rect class="target" data-target="${i}" x="${o.x * C + 1.5}" y="${o.y * C + 1.5}" width="${C - 3}" height="${C - 3}" rx="6"/>`;
       }
+    } else if (ui.aiming && !ui.busy) {
+      for (const d of game.shotDirs()) {
+        const ax = p.x + DC.DIRS[d][0], ay = p.y + DC.DIRS[d][1];
+        out += `<g class="arrow aim" data-dir="${d}" transform="translate(${center(ax)} ${center(ay)})">
+          <circle r="13"/><path d="M-7 0H6M0.5-5.5L6.5 0L0.5 5.5" transform="rotate(${ANGLE[d]})"/></g>`;
+      }
     } else if (!ui.busy) {
       const steps = game.stepsLeft();
       for (const d of game.availableDirs()) {
@@ -291,7 +327,13 @@
 
   // Dashed straight-line preview of the hovered direction (its own layer so
   // hovering never re-creates the clickable arrows).
-  function previewLayer(game, preview) {
+  function previewLayer(game, preview, shot) {
+    if (shot && shot.length) {
+      const p = game.s.player;
+      const [lx, ly] = shot[shot.length - 1];
+      return `<polyline class="shotline" points="${[[p.x, p.y], ...shot].map(([x, y]) => `${center(x)},${center(y)}`).join(' ')}"/>
+        <circle class="shot-end" cx="${center(lx)}" cy="${center(ly)}" r="6"/>`;
+    }
     if (!preview || !preview.length) return '';
     const p = game.s.player;
     const [lx, ly] = preview[preview.length - 1];

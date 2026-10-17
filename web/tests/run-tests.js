@@ -510,13 +510,149 @@ test('vision, memory and torches', () => {
   ok(Game.fromSave(cp).error, 'bad torch count rejected');
 });
 
+test('sling and bodies', () => {
+  const map = ['###########', '#@........#', '#.....#...#', '#........>#', '###########'];
+  const g = sandbox(map, [{ type: 'enemy', x: 4, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 8, y: 1, hp: 2, maxHp: 2 }]);
+  ok(g.s.player.ammo === 3 && !g.canShoot(), 'start with 3 ammo, no shot before rolling');
+  forceRoll(g, 1, 1); // range 2: too short to reach x=4
+  let r = g.shoot('E');
+  ok(r && !r.hit && g.s.player.ammo === 2 && g.s.phase === 'roll' && r.cells.length === 2, 'miss uses ammo and ends turn');
+  forceRoll(g, 3, 3); // range 6
+  ok(g.shotDirs().join() === 'E,S', 'even roll shoots straight, never straight into a wall');
+  r = g.shoot('E');
+  const e1 = g.s.level.objects[0];
+  ok(r.hit && e1.done && g.s.player.ammo === 1, 'hit kills first enemy only');
+  const body = g.s.level.objects.find((o) => o.type === 'body');
+  ok(body && body.x === 4 && body.ammo >= 1 && body.ammo <= 2, 'shot kill drops a body');
+  ok(!g.s.level.objects[1].done && g.s.level.objects[1].hp === 2, 'second enemy untouched');
+  // Walls stop shots.
+  g.s.player.x = 6; g.s.player.y = 3; // wall directly north at (6,2)
+  forceRoll(g, 3, 3);
+  ok(g.shotPath('N').cells.length === 0 && g.shotPath('S').cells.length === 0 && g.shotPath('E').cells.length === 3, 'walls stop the shot');
+  // Walk over the body to collect ammo.
+  g.s.player.x = 1; g.s.player.y = 1;
+  const before = g.s.player.ammo;
+  forceRoll(g, 1, 2); g.s.parity = 'ortho'; g.s.steps = 3;
+  g.choose('E'); run(g);
+  ok(g.s.player.ammo === before + body.ammo && body.done, 'body ammo picked up');
+  // Melee kills drop bodies; fireball kills don't.
+  const m = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 7, y: 3, hp: 1, maxHp: 1 }]);
+  forceRoll(m, 1, 1);
+  m.choose('E'); run(m);
+  ok(m.s.level.objects.some((o) => o.type === 'body' && o.x === 3), 'melee kill drops body');
+  m.s.player.spells.fireball = 1;
+  m.fireball(1);
+  ok(!m.s.level.objects.some((o) => o.type === 'body' && o.x === 7), 'fireball leaves no body');
+  const none = sandbox(map); none.s.player.ammo = 0; forceRoll(none, 3, 3);
+  ok(!none.canShoot() && !none.shoot('E'), 'no shot without ammo');
+});
+
+test('stalkers', () => {
+  for (const seed of SEEDS) {
+    for (let f = 4; f <= 40; f++) {
+      if (R.isShopFloor(seed, f)) continue;
+      const n = generateLevel(seed, f).objects.filter((o) => o.stalker).length;
+      ok(n === Math.min(R.stalkerCount(f), generateLevel(seed, f).objects.filter((o) => o.type === 'enemy').length), 'stalker count');
+      if (f < 12) ok(n === 0, 'stalker before floor 12');
+    }
+  }
+  ok(R.stalkerCount(12) === 1 && R.stalkerCount(20) === 2 && R.stalkerCount(99) === 3, 'stalker count formula');
+  const map = ['###########', '#@........#', '#.........#', '#####.....#', '#.........#', '#........>#', '###########'];
+  const st = (x, y, hp) => ({ type: 'enemy', x, y, hp: hp || 1, maxHp: hp || 1, stalker: true });
+  // In line of sight: moves one square closer after a turn.
+  let g = sandbox(map, [st(7, 1)]);
+  g.s.floor = 12; forceRoll(g, 1, 1); g.passTurn = undefined; g.endTurn();
+  ok(g.s.level.objects[0].x === 6 && g.s.level.objects[0].y === 1, 'stalker steps toward you');
+  // Behind a wall: stays put.
+  g = sandbox(map, [st(2, 4)]);
+  g.endTurn();
+  ok(g.s.level.objects[0].x === 2 && g.s.level.objects[0].y === 4, 'no sight, no move');
+  // Never steps into webs or items.
+  g = sandbox(map, [st(3, 1), { type: 'web', x: 2, y: 1 }, { type: 'coin', x: 2, y: 2 }]);
+  g.endTurn();
+  const o = g.s.level.objects[0];
+  ok(!(o.x === 2 && o.y === 1) && !(o.x === 2 && o.y === 2), 'stalker avoids webs and items');
+  // Adjacent: attacks, can be killed, leaves a body.
+  g = sandbox(map, [st(2, 1, 1)]);
+  g.s.floor = 12;
+  g.endTurn();
+  ok(g.s.player.hp === 9 && g.s.level.objects[0].done && g.s.level.objects.some((x) => x.type === 'body'), 'stalker attacks and dies');
+  g = sandbox(map, [st(2, 1, 5)]);
+  g.s.player.hp = 1;
+  g.endTurn();
+  ok(g.s.phase === 'dead', 'stalker can kill you');
+  // Dark floors: only within 2 squares unless your torch is lit.
+  g = sandbox(map, [st(6, 1)]);
+  g.s.level.dark = true; g.rebuildIndex();
+  g.endTurn();
+  ok(g.s.level.objects[0].x === 6, 'dark, no torch: far stalker waits');
+  g.s.level.torchLit = true;
+  g.endTurn();
+  ok(g.s.level.objects[0].x === 5, 'torchlight draws it from afar');
+  g = sandbox(map, [st(3, 1)]);
+  g.s.level.dark = true; g.rebuildIndex();
+  g.endTurn();
+  ok(g.s.level.objects[0].x === 2, 'dark, no torch: close stalker hunts');
+});
+
+test('lock picks and dexterity', () => {
+  const map = ['#########', '#@..#...#', '#...D..>#', '#...#...#', '#########'];
+  const door = () => ({ type: 'lock', x: 4, y: 2, color: 'gold' });
+  let g = sandbox(map, [door()]);
+  g.s.player.x = 3; g.s.player.y = 2; // right next to the door
+  forceRoll(g, 3, 3);
+  ok(!g.availableDirs().includes('E'), 'no pick, no door');
+  g.s.player.lockpicks = 1;
+  ok(g.availableDirs().includes('E') && g.legalMove('E', 6).kind === 'pick', 'pick makes the door choosable');
+  g.s.player.x = 2; // one step away: slide into the door
+  g.choose('E'); run(g);
+  ok(g.s.phase === 'pickPrompt' && g.pickDoor() === g.s.level.objects[0] && g.s.player.x === 3, 'prompt at the door');
+  g.d = () => 11; // 11 + DEX 1 = 12 >= gold 12
+  let r = g.pickLock();
+  ok(r.ok && g.s.player.lockpicks === 0 && g.s.level.objects[0].done && g.s.phase === 'moving', 'success opens and continues');
+  run(g);
+  ok(g.s.phase === 'levelDone', 'move continued to the stairs');
+
+  g = sandbox(map, [door()]);
+  g.s.player.x = 2; g.s.player.y = 2; g.s.player.lockpicks = 1;
+  forceRoll(g, 3, 3); g.choose('E'); run(g);
+  g.d = () => 10; // 10 + 1 = 11 < 12
+  r = g.pickLock();
+  ok(!r.ok && g.s.player.lockpicks === 0 && !g.s.level.objects[0].done && g.s.phase === 'roll' && g.s.player.x === 3, 'failure breaks the pick and stops');
+
+  g = sandbox(map, [door()]);
+  g.s.player.x = 2; g.s.player.y = 2; g.s.player.lockpicks = 1;
+  forceRoll(g, 3, 3); g.choose('E'); run(g);
+  ok(g.declinePick() && g.s.phase === 'moving', 'decline');
+  run(g);
+  ok(g.s.player.lockpicks === 1 && !g.s.level.objects[0].done && (g.s.phase === 'redirect' || g.s.phase === 'roll'), 'declined door is solid this turn');
+  ok(R.pickChance(1, 'gold') === 0.5 && R.pickChance(1, 'emerald') === 0.2 && R.pickChance(3, 'gold') === 0.6, 'pick chances');
+
+  // Shop: DEX always on sale, price rises; checkpoints keep the new fields.
+  const sh = Game.create('dexshop');
+  sh.s.phase = 'levelDone'; sh.s.floor = 4; sh.nextFloor();
+  sh.s.player.coins = 200;
+  const di = sh.s.shop.items.findIndex((i) => i.id === 'dex');
+  const p1 = sh.price('dex');
+  ok(di === 2 && sh.buy(di) && sh.s.player.dex === 2 && sh.price('dex') > p1 && sh.buy(di) && sh.s.player.dex === 3, 'buy DEX repeatedly');
+  const cp = JSON.parse(JSON.stringify(sh.checkpointFor(6)));
+  cp.player.ammo = 7; cp.player.lockpicks = 2;
+  const back = Game.fromSave(cp).game.s.player;
+  ok(back.dex === 3 && back.ammo === 7 && back.lockpicks === 2, 'checkpoint keeps dex, ammo, picks');
+  delete cp.player.dex; delete cp.player.ammo; delete cp.player.lockpicks;
+  const old = Game.fromSave(cp).game.s.player;
+  ok(old.dex === 1 && old.ammo === R.START_AMMO && old.lockpicks === 0, 'older saves get defaults');
+  cp.player.dex = 'x';
+  ok(Game.fromSave(cp).error, 'bad dex rejected');
+});
+
 test('shop and gamble', () => {
   const g = Game.create('shoptest');
   while (g.s.floor < 4) { g.s.phase = 'levelDone'; g.nextFloor(); }
   g.s.phase = 'levelDone'; g.nextFloor();
   ok(g.s.floor === 5 && g.s.phase === 'shop', 'floor 5 shop');
   const ids = g.s.shop.items.map((i) => i.id);
-  ok(ids[0] === 'heal' && ids[1] === 'str' && ids.length === 6 && new Set(ids).size === 6, 'shop items');
+  ok(ids[0] === 'heal' && ids[1] === 'str' && ids[2] === 'dex' && ids.length === 7 && new Set(ids).size === 7, 'shop items');
   g.s.player.coins = 100;
   ok(g.buy(1) && g.s.player.str === 2, 'buy strength');
   ok(!g.buy(0), 'cannot heal at full');
@@ -546,12 +682,16 @@ test('random play simulation', () => {
       if (s.phase === 'dead') { deaths++; break; }
       if (s.phase === 'levelDone' || s.phase === 'shop') { g.nextFloor(); floors++; if (s.floor > 30) break; continue; }
       if (s.phase === 'roll') { g.roll(); continue; }
+      if (s.phase === 'choose' && g.canShoot() && pick.chance(0.1)) { g.shoot(pick.pick(g.shotDirs())); continue; }
       if (s.phase === 'choose' || s.phase === 'redirect') {
         const d = g.availableDirs();
         if (!d.length) { ok(s.phase === 'choose', 'redirect with no options'); g.passTurn(); continue; }
         g.choose(pick.pick(d));
         let n = 0;
-        while (g.s.phase === 'moving') { g.step(); ok(++n < 500, 'runaway move'); if (n >= 500) break; }
+        while (g.s.phase === 'moving' || g.s.phase === 'pickPrompt') {
+          if (g.s.phase === 'pickPrompt') { if (pick.chance(0.5)) g.pickLock(); else g.declinePick(); continue; }
+          g.step(); ok(++n < 500, 'runaway move'); if (n >= 500) break;
+        }
         const L = g.s.level;
         if (L) ok(L.tiles[g.s.player.y * L.w + g.s.player.x] !== 0, 'player inside a wall');
         continue;

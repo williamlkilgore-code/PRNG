@@ -46,6 +46,10 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
 | Coins | 0 | Spent in shops |
 | Keys | none | Colored keys. Cleared when you enter a new floor |
 | Spells | 0 of each | `noclip`, `fireball`, `luck`, `reroll`, `invis` |
+| Dexterity (`dex`) | 1 | Added to lock-pick rolls (2.10) |
+| Sling stones (`ammo`) | 3 (`START_AMMO`) | One per shot (2.10) |
+| Lock picks (`lockpicks`) | 0 | Used up on every attempt (2.10) |
+| Torches (`torches`) | 0 | Carried torches (2.9) |
 
 ### 2.2 Turn and movement
 
@@ -105,6 +109,9 @@ All values use the floor number `f`.
 | **Spider web** | Movement stops at once on the web square. The web is used up. Your next roll's movement is halved. |
 | **Enemy** | Has `floor(f/10 + 1)` health. See "Encounters" below. |
 | **Torch** | Only on dark floors (see 2.9). Lights at once when picked up and burns until the floor ends. |
+| **Body** | Left where an enemy dies in melee or to a sling stone (not Fireball). Holds 1–2 sling stones (d2), picked up when you pass over it. |
+| **Lock pick** | From floor 4, a floor with a lock has a 30% chance of a lock pick in the start zone. Picked up and carried. |
+| **Stalker** | An enemy with `stalker: true` (floor 12+). It hunts you (2.10). |
 | **Dark chest** | Only on dark floors. Gives the chest's coins plus 1 random spell (one of the 5 kinds, rolled on the floor's dice). |
 | **Portal** | Comes in colored pairs. Stepping onto one moves you to its twin, and the slide continues from the twin in the same direction. Landing on the twin does not trigger it again. Portals are never used up. |
 
@@ -135,8 +142,8 @@ All values use the floor number `f`.
 - **Floor 5 is always a shop.** A shop floor has no map. It shows the shop screen, then you leave to floor `f+1`.
 - **Schedule after floor 5.** Each gap between shops is 4–10 floors. There are never more than 2 shops in any 10 consecutive floors, which is the same as `shop[i+2] - shop[i] >= 10`.
   - It is generated this way: `next = prev + randInt(max(4, prev2 + 10 - prev), 10)`, where `prev2` is the shop before `prev`.
-- **Always on sale:** **Heal** (restore to full) and **Strength +1**. Both can be bought again and again.
-- **Random offers:** 4 more, drawn without repeats from `maxhp, gamble, noclip, fireball, luck, reroll, invis, torch`. These can each be bought once, except Gamble, which can be played again and again.
+- **Always on sale:** **Heal** (restore to full), **Strength +1** and **Dexterity +1**. All can be bought again and again.
+- **Random offers:** 4 more, drawn without repeats from `maxhp, gamble, noclip, fireball, luck, reroll, invis, torch, ammo, lockpick`. These can each be bought once, except Gamble, which can be played again and again.
 
 **Prices.** `t = floor(f/10)`.
 
@@ -151,6 +158,9 @@ All values use the floor number `f`.
 | No Clipping | `7 + t` |
 | Dark One's Luck | `9 + t` |
 | Torch (carried) | `4 + t` |
+| Dexterity +1 | `8 + 4*(dex - 1) + 2t` |
+| Sling stones ×3 | `3 + t` |
+| Lock pick | `4 + t` |
 
 **Gamble.** Wager from 1 up to your coins, then roll 1d6:
 
@@ -207,6 +217,20 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 | **Torches** | A found torch lights at once. A torch bought in the shop is carried (`player.torches`) and lit with the torch button, only on a dark floor that isn't already lit. A lit torch lasts until the floor ends. |
 | **Rules unchanged** | Movement works the same, so you can walk blind into anything. |
 | **What darkness limits** | The hover preview stops at the first square you can't see. Fireball can only target obstacles you can see. A No Clipping arrow whose landing square is unseen is drawn on the wall instead. |
+
+### 2.10 Sling, stalkers and lock picks
+
+| Rule | Detail |
+|---|---|
+| **Shooting** | Only in the `choose` phase (after rolling, before moving), with ammo, as an alternative to moving. `shoot(dir)` uses one of the roll's 4 direction types, and `shotDirs()` lists only directions with at least one open square. The stone flies up to `steps` squares (the move total, halved if webbed). It stops before walls and locked doors (and at a corner squeeze), and hits the first enemy for 1 damage. Ammo −1, then the turn ends. A miss still costs the stone. |
+| **Bodies** | `killEnemy(o, dropBody)`. Melee and sling kills push a `body` object with `ammo: d2` onto the enemy's square. Fireball kills don't. |
+| **Stalkers** | `rules.stalkerCount(f)` = 0 below floor 12, then `min(3, 1 + floor((f − 12)/8))`. `levelgen` flags that many of the placed enemies as `stalker`, chosen at random. |
+| **Stalker turns** | `endTurn()` calls `moveStalkers()` after every turn except reaching the stairs. Each stalker that **sees** you moves 1 square toward you: the step that most reduces Chebyshev distance, then Manhattan distance, preferring straight steps. It never enters walls, locks, webs, items or other enemies, and obeys the corner rule. If it's already next to you, it attacks instead: the same `encounter()` as melee (it deals floor damage, you hit back with STR, and a kill leaves a body). |
+| **Stalker sight** | `stalkerSees(o)`: a clear line of sight (`lineOfSight`). On a dark floor without your torch lit, only within 2 squares. With your torch lit, from any distance. |
+| **Lock picks** | `legalMove` returns `kind: 'pick'` for a step into a locked door when you don't hold its key, you have a pick, the corner rule allows it, and you haven't declined that door this turn. Reaching it sets `phase = 'pickPrompt'` (`pickTarget` is the door's index), and the UI asks whether to use the pick. |
+| **Picking** | `pickLock()` rolls d20 + DEX against `LOCK_TARGET` (gold 12, crimson 14, azure 16, emerald 18) and always uses up the pick. Success opens the door and continues the move (phase back to `moving`). Failure ends the turn in front of the door. |
+| **Declining** | `declinePick()` adds the door to `declinedPicks`, so it counts as solid until the turn ends, and the slide goes on to the normal redirect. |
+| **Odds** | `rules.pickChance(dex, color)` = `clamp(21 − (target − dex), 0, 20) / 20`. With DEX 1: gold 50%, crimson 40%, azure 30%, emerald 20%. Each extra DEX adds 5%. |
 
 ---
 
@@ -356,7 +380,9 @@ Neighboring rooms share a one-square wall, which gives the "graph paper" look. E
 | `roll` | Roll, Fireball, arm No Clipping or Invisibility |
 | `choose` | Choose a direction, Pass (only when no direction is legal), Re-roll, Dark One's Luck, Fireball, arm spells |
 | `moving` | Nothing (the UI is animating) |
+| `choose` (extra) | Shoot with the sling (`shoot(dir)`) instead of moving |
 | `redirect` | Choose a direction, Fireball, arm spells |
+| `pickPrompt` | `pickLock()` or `declinePick()` (a slide reached a pickable door) |
 | `levelDone` | `nextFloor()` |
 | `shop` | `buy(i)`, `gamble(w)`, `nextFloor()` |
 | `dead` | Start a new game |
@@ -373,7 +399,7 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   seedText: 'moss-rune-42', seed: <uint32>,
   floor: 1, turn: 0, floorStartTurn: 0,
   phase: 'roll',              // see 4.5
-  player: { x, y, hp, maxHp, str, coins, keys: ['gold'], webbed: false, torches: 0,
+  player: { x, y, hp, maxHp, str, coins, keys: ['gold'], webbed: false, torches: 0, ammo: 3, dex: 1, lockpicks: 0,
             spells: { noclip, fireball, luck, reroll, invis } },
   diceState: <uint32>,        // dice RNG state
   dice: [d1, d2] | null, steps: 0, parity: 'ortho'|'diag', halved: false,
@@ -410,7 +436,9 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
 **Obj:**
 
 ```js
-{ type: 'coin'|'chest'|'darkchest'|'heart'|'medpack'|'key'|'lock'|'web'|'enemy'|'portal'|'torch',
+{ type: 'coin'|'chest'|'darkchest'|'heart'|'medpack'|'key'|'lock'|'web'|'enemy'|'portal'|'torch'|'body'|'lockpick',
+  stalker?,       // enemy: hunts the player (2.10)
+  ammo?,          // body: sling stones it holds
   x, y,
   color?,         // key, lock, portal
   hp?, maxHp?,    // enemy
@@ -474,7 +502,8 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
   v: 2,
   seedText: 'moss-rune-42',
   floor: 7,                                   // the floor to start
-  player: { hp, maxHp, str, coins, torches, spells: { noclip, fireball, luck, reroll, invis } },  // torches optional (0)
+  player: { hp, maxHp, str, coins, torches, ammo, dex, lockpicks, spells: { noclip, fireball, luck, reroll, invis } },
+  // torches, ammo, dex and lockpicks are optional; older saves get 0, 3, 1 and 0
   stats: { kills, coins, floorsCleared },     // optional; score screen only
   turn: 123                                   // optional; turn counter
 }
@@ -583,6 +612,16 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
 - **Level invariants** for floors 1–80 on 6 seeds: room size ≥ 3×3, closed border, object placement, lock walls on opposite sides, one key per lock, keys reachable with all locks closed, full connectivity, stairs reachable, portal pairing and lock zones, obstacles present.
 - **Determinism:** the same seed gives the same level.
 - **Scripted scenarios** on small hand-made maps (`sandbox([...rows])`, where `#` is wall, `D` is doorway, `@` is start and `>` is stairs). They cover parity, sliding, redirect and no doubling back, webs, combat, keys and locks, portals, every spell, and the shop and gamble payouts.
+- **Sling, stalkers and lock picks:**
+  - Shots: range, walls, the first enemy, ammo, the turn ending, and no shots straight into a wall.
+  - Bodies from melee and sling kills (none from Fireball), and collecting their ammo.
+  - Stalker counts per floor.
+  - Stalker movement: it closes in when it can see you, waits behind walls, and avoids webs and items.
+  - Stalker attacks: adjacent stalkers attack, can kill you, and leave bodies.
+  - Stalker sight on dark floors: within 2 squares without your torch, and from anywhere with it.
+  - Lock picks: a pickable door is a legal direction only while you hold a pick. The prompt appears. Success continues the move, failure breaks the pick and stops, and declining makes the door solid for the turn. The odds are checked.
+  - The shop: DEX is always on sale and its price rises.
+  - Checkpoints: the new fields round-trip, get defaults in older saves, and bad values are rejected.
 - **Tutorial floors:** floor 1 is one 5×5 room with the stairs in the opposite corner and no obstacles. Floor 2 is two rooms with webs, none in the start room. Floor 3 is four chained rooms with a lock guarding the stairs (key reachable), plus an enemy, a web and every item, and no portal. Floor 4 uses the normal generator. `startFloor: 4` skips the tutorial.
 - **Dark floors:** the selection rules (never floors 1–5, shops or two in a row, and a sensible frequency); one torch reachable without keys outside the start room, plus one dark chest; vision radius; walls blocking light; memory; stairs staying marked; preview and fireball limited to what you can see; carried, found and shop torches; the torch resetting each floor; torches in checkpoints.
 - **Saves:** a checkpoint round-trips; a reloaded floor replays identically with the same choices; stats carry over; shop checkpoints open the shop; older saves convert; tampered checkpoints are rejected.

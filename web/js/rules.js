@@ -61,5 +61,15 @@
   // items), 'layout' (walls and floor only) or 'none'. Seen stairs always stay.
   rules.darkMemory = (f) => (f >= 35 ? 'none' : f >= 20 ? 'layout' : 'full');
 
+  // Sling: ammo carried at the start of a run.
+  rules.START_AMMO = 3;
+  // Lock picks: d20 + DEX must reach the door color's target.
+  rules.LOCK_TARGET = { gold: 12, crimson: 14, azure: 16, emerald: 18 };
+  // Chance (0..1) that d20 + dex >= target.
+  rules.pickChance = (dex, color) => Math.max(0, Math.min(20, 21 - (rules.LOCK_TARGET[color] - dex))) / 20;
+  // Stalkers: enemies that hunt you, from floor 12 (1, +1 every 8 floors, max 3).
+  rules.STALKER_FROM = 12;
+  rules.stalkerCount = (f) => (f < rules.STALKER_FROM ? 0 : Math.min(3, 1 + Math.floor((f - rules.STALKER_FROM) / 8)));
+
   DC.rules = rules;
 })(typeof window !== 'undefined' ? window : globalThis);

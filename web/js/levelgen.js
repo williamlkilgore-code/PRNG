@@ -175,6 +175,12 @@
       L.objects.push({ type: 'key', x: c[0], y: c[1], color: KEY_COLORS[k] });
     }
 
+    // Sometimes a lock pick lies in the start zone of a floor with locks.
+    if (floor >= 4 && lockList.length && rng.chance(0.3)) {
+      const c = take(zoneFloor);
+      if (c) L.objects.push({ type: 'lockpick', x: c[0], y: c[1] });
+    }
+
     // Dark floors: a torch the player can reach from the start without keys
     // (never in the start room), and a guaranteed dark chest anywhere.
     L.dark = DC.rules.isDarkFloor(seed, floor);
@@ -241,6 +247,9 @@
     place('web', Math.min(6, 1 + Math.floor(floor / 3) + rng.int(0, 1)), awayFromStart);
     const hp = R.enemyHealth(floor);
     place('enemy', Math.min(8, 1 + Math.floor(floor / 3) + rng.int(0, 1)), awayFromStart, () => ({ hp, maxHp: hp }));
+    // Stalkers: some of the enemies hunt the player (floor 12+).
+    const enemies = L.objects.filter((o) => o.type === 'enemy');
+    rng.shuffle(enemies.slice()).slice(0, R.stalkerCount(floor)).forEach((o) => { o.stalker = true; });
 
     return L;
   }

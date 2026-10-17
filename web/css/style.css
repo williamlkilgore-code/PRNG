@@ -130,6 +130,18 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .die.rolling { animation: tumble .35s ease-out; }
 @keyframes tumble { 0% { transform: rotate(-25deg) scale(.8); } 60% { transform: rotate(10deg) scale(1.05); } 100% { transform: none; } }
 .dice-info { font-size: 18px; line-height: 1.2; }
+.dice-box .dice-info { flex: 1; min-width: 0; }
+.sling-btn {
+  position: relative; flex: none; width: 48px; height: 48px; border: 2px solid var(--ink); border-radius: 10px;
+  background: var(--paper); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; color: var(--ink);
+}
+.sling-btn .icon { width: 34px; height: 34px; }
+.sling-btn .count {
+  position: absolute; right: -6px; top: -6px; background: var(--ink); color: var(--card);
+  border-radius: 10px; min-width: 20px; height: 20px; font-size: 14px; line-height: 20px; text-align: center; padding: 0 4px;
+}
+.sling-btn:disabled { opacity: .4; cursor: default; }
+.sling-btn.armed { background: var(--bad); color: #fff; box-shadow: 0 0 0 3px var(--card), 0 0 0 5px var(--bad); }
 .dice-info .big { font-size: 30px; display: block; line-height: 1; }
 .dice-info .tag { display: inline-block; border: 1.5px solid currentColor; border-radius: 6px; padding: 0 6px; font-size: 15px; margin-top: 3px; }
 .tag.halved { color: var(--warn); }
@@ -200,6 +212,9 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .arrow { animation: pulse 1.6s ease-in-out infinite; transform-box: fill-box; }
 @keyframes pulse { 50% { opacity: .7; } }
 .preview-layer { pointer-events: none; }
+.shotline { fill: none; stroke: var(--bad); stroke-width: 3; stroke-dasharray: 2 6; stroke-linecap: round; }
+.shot-end { fill: none; stroke: var(--bad); stroke-width: 2.5; }
+.arrow.aim circle { fill: var(--bad); }
 .preview { fill: none; stroke: var(--accent); stroke-width: 3; stroke-dasharray: 5 5; stroke-linecap: round; opacity: .85; }
 .preview-end { fill: none; stroke: var(--accent); stroke-width: 2.5; }
 .target { fill: rgba(240, 138, 36, .25); stroke: #f08a24; stroke-width: 2.5; stroke-dasharray: 5 3; cursor: crosshair; }
@@ -308,17 +323,30 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
     align-self: stretch; padding: 10px; gap: 8px 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "dice pad" "status pad" "spells spells";
   }
-  .dice-box { grid-area: dice; gap: 8px; }
+  .dice-box { grid-area: dice; gap: 4px 8px; flex-wrap: wrap; }
   .die { width: 42px; height: 42px; }
   .dice { gap: 6px; }
-  .dice-info { font-size: 15px; }
-  .dice-info .big { font-size: 24px; }
-  .dice-info .tag { font-size: 13px; }
+  .sling-btn { width: 42px; height: 42px; }
+  .sling-btn .icon { width: 30px; height: 30px; }
+  .dice-box .dice-info { order: 3; flex: 1 1 100%; font-size: 15px; }
+  .dice-info .big { font-size: 22px; display: inline; margin-right: 4px; }
+  .dice-info br { display: none; }
+  .dice-info .tag { font-size: 13px; margin-top: 0; }
   .status { grid-area: status; font-size: 15px; min-height: 0; align-self: start; }
   .pad { grid-area: pad; width: 168px; gap: 5px; }
   .spells { grid-area: spells; }
   .spell { aspect-ratio: auto; height: 48px; }
   .spell .icon { width: 36px; height: 36px; }
+}
+
+/* Short portrait phones: tighten the docked controls. */
+@media (max-width: 860px) and (orientation: portrait) and (max-height: 720px) {
+  .board-wrap { min-height: 150px; }
+  .controls { padding: 8px; gap: 6px 10px; }
+  .pad { width: 144px; gap: 4px; }
+  .pad button { min-height: 40px; }
+  .status { font-size: 14px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .spell { height: 42px; }
 }
 
 /* Phone landscape: map on the left, a slim control column on the right. */

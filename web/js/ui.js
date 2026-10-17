@@ -72,6 +72,9 @@
     items: { icon: 'i-chest', title: 'Treasure', text: 'Coins buy things in shops (floor 5 is the first). Chests hold extra coins. Hearts and med packs heal you.' },
     portal: { icon: 'i-portal', title: 'Portals', text: 'Step into a portal and you come out of its matching twin, still moving in the same direction.' },
     dark: { icon: 'i-moon', title: 'A dark floor', text: "You can only see the squares next to you. Every dark floor has a torch you can reach without keys. Pick it up to see 4 squares around you. There's also a dark chest with a free spell." },
+    shoot: { icon: 'i-sling', title: 'Your sling', text: 'After rolling you can <b>shoot instead of moving</b>: tap the sling, then a direction. The stone flies as far as your roll in a straight or diagonal line (same as your move) and hits the first enemy for 1 damage. Enemies you kill leave bodies; walk over them to collect stones.' },
+    stalker: { icon: 'i-stalker', title: 'Stalkers', text: 'These hooded enemies hunt you. After each of your turns, a stalker that can see you moves one square closer, and attacks if it is next to you. On dark floors they spot you only up close, unless your torch is lit, which they can see from anywhere.' },
+    lockpick: { icon: 'i-lockpick', title: 'Lock picks', text: "With a lock pick, walking into a locked door you don't have the key for lets you try the lock: d20 + DEX must reach the door's number (gold 12, crimson 14, azure 16, emerald 18). Buy DEX in the shop to get better at it." },
     spells: { icon: 'i-sp-fireball', title: 'You have a spell', text: 'Spells sit in the bar under the direction pad. Tap one to use it. Hover or long-press to read what it does, or open <b>Rules</b>.' },
   };
   const hintState = (() => {
@@ -99,10 +102,13 @@
       if (has('chest') || has('heart') || has('medpack')) queueHint('items');
       if (has('portal')) queueHint('portal');
       if (L.dark) queueHint('dark');
+      if (L.objects.some((o) => o.stalker && !o.done)) queueHint('stalker');
     }
     if (s.phase === 'choose' && s.dice) queueHint(s.parity === 'ortho' ? 'even' : 'odd');
     if (s.phase === 'redirect') queueHint('blocked');
     if (Object.values(s.player.spells).some((n) => n > 0)) queueHint('spells');
+    if (s.phase === 'choose' && s.floor >= 3 && game.canShoot()) queueHint('shoot');
+    if (s.player.lockpicks > 0) queueHint('lockpick');
     showNextHint();
   }
   function showNextHint() {
@@ -133,6 +139,8 @@
       <span class="stat" title="Health">${RD.icon('i-heart')}<b>${p.hp}/${p.maxHp}</b>
         <span class="hpbar"><span style="width:${(100 * p.hp) / p.maxHp}%"></span></span></span>
       <span class="stat" title="Strength">${RD.icon('i-sp-str')}<b>${p.str}</b></span>
+      <span class="stat" title="Dexterity">${RD.icon('i-sp-dex', '', '#7b4fc0')}<b>${p.dex}</b></span>
+      ${p.lockpicks ? `<span class="stat" title="Lock picks">${RD.icon('i-lockpick')}<b>${p.lockpicks}</b></span>` : ''}
       <span class="stat" title="Coins">${RD.icon('i-coin')}<b>${p.coins}</b></span>
       ${keys ? `<span class="stat" title="Keys">${keys}</span>` : ''}
       ${s.level && s.level.dark ? `<span class="stat dark-stat" title="${s.level.torchLit ? 'Dark floor, torch lit' : 'Dark floor'}">${RD.icon(s.level.torchLit ? 'i-torch' : 'i-moon')}<b>${s.level.torchLit ? 'Lit' : 'Dark'}</b></span>` : ''}
@@ -158,7 +166,7 @@
 
   function renderPreview() {
     const layer = $('#board .preview-layer');
-    if (layer) layer.innerHTML = game.s.level ? RD.previewLayer(game, ui.preview) : '';
+    if (layer) layer.innerHTML = game.s.level ? RD.previewLayer(game, ui.aiming ? null : ui.preview, ui.shotFlash || (ui.aiming ? ui.preview : null)) : '';
   }
 
   function renderPanel() {
@@ -179,15 +187,20 @@
     }
 
     $('#status').innerHTML = statusText();
+    if (ui.aiming && !game.canShoot()) ui.aiming = false;
     const legal = ui.busy ? [] : game.availableDirs();
-    const dirs = ui.targeting ? [] : legal;
+    const dirs = ui.targeting ? [] : ui.aiming ? game.shotDirs() : legal;
+    const sling = $('#slingBtn');
+    sling.disabled = ui.busy || !(ui.aiming || game.canShoot());
+    sling.classList.toggle('armed', !!ui.aiming);
+    sling.querySelector('.count').textContent = s.player.ammo;
     document.querySelectorAll('#pad [data-dir]').forEach((b) => { b.disabled = !dirs.includes(b.dataset.dir); });
 
     // The pad's center is the Roll button, becomes Pass when no move is
     // legal, and otherwise shows the moves left.
     const center = $('#padCenter');
     const canRoll = !ui.busy && !ui.targeting && s.phase === 'roll';
-    const canPass = !ui.busy && !ui.targeting && s.phase === 'choose' && legal.length === 0;
+    const canPass = !ui.busy && !ui.targeting && !ui.aiming && s.phase === 'choose' && legal.length === 0;
     const mode = canRoll ? 'roll' : canPass ? 'pass' : 'count';
     if (center.dataset.mode !== mode || mode === 'count') {
       center.dataset.mode = mode;
@@ -259,6 +272,7 @@
   function statusText() {
     const s = game.s;
     if (ui.targeting) return 'Fireball: tap an obstacle (web, enemy or locked door) to destroy it. Tap the spell again to cancel.';
+    if (ui.aiming) return `Sling: tap a ${s.parity === 'ortho' ? 'straight' : 'diagonal'} direction to shoot (range ${s.steps}). It hits the first enemy in line and ends your turn. Tap the sling again to cancel.`;
     switch (s.phase) {
       case 'roll': return s.player.webbed ? 'Still tangled in web: this roll is halved. Tap Roll.' : 'Tap Roll (center of the pad) or press Space.';
       case 'choose': {
@@ -277,8 +291,34 @@
 
   // ------------------------------------------------------------------- input
   async function choose(dir) {
+    if (ui.aiming) { shoot(dir); return; }
     if (ui.busy || ui.targeting || !game.choose(dir)) return;
     runMove();
+  }
+
+  // Sling: shoot instead of moving, flash the stone's path, then end the turn.
+  async function shoot(dir) {
+    if (ui.busy) return;
+    const r = game.shoot(dir);
+    if (!r) return;
+    ui.aiming = false; ui.preview = null;
+    ui.busy = true;
+    ui.shotFlash = r.cells.length ? r.cells : null;
+    render();
+    await sleep(450);
+    ui.shotFlash = null;
+    ui.busy = false;
+    render();
+    save();
+    afterPhase();
+  }
+
+  function toggleAim() {
+    if (ui.busy) return;
+    ui.aiming = !ui.aiming && game.canShoot();
+    if (ui.aiming) ui.targeting = false;
+    ui.preview = null;
+    render();
   }
 
   // Animate the current move step by step until it stops.
@@ -289,12 +329,41 @@
     while (game.s.phase === 'moving') {
       const ev = game.step();
       render();
+      if (ev.type === 'pick') break;
       await sleep(ev.type === 'teleport' ? 380 : ev.type === 'fight' || ev.type === 'web' ? 300 : 120);
     }
     ui.busy = false;
     render();
+    if (game.s.phase === 'pickPrompt') { showPickDialog(); return; }
     save();
     afterPhase();
+  }
+
+  // Walking into a locked door with a lock pick: ask before using it.
+  function showPickDialog() {
+    const door = game.pickDoor();
+    if (!door) return;
+    const p = game.s.player, target = R.LOCK_TARGET[door.color];
+    const chance = Math.round(R.pickChance(p.dex, door.color) * 100);
+    openModal(`
+      <div class="hint">
+        ${RD.icon('i-lock', 'hint-icon', RD.COLORS[door.color])}
+        <div><h2>Pick the ${door.color} lock?</h2>
+        <p>Roll d20 + your DEX (${p.dex}). You need <b>${target}</b> or more, so a roll of ${Math.max(1, target - p.dex)}+ (<b>${chance}%</b>).</p>
+        <p class="muted">Success opens the door and you keep moving. Failure breaks the pick and your move stops here. Either way the pick is used up (you have ${p.lockpicks}).</p></div>
+      </div>
+      <div class="row">
+        <button class="btn primary" type="button" id="pickYes">Pick the lock</button>
+        <button class="btn" type="button" id="pickNo">Leave it</button>
+      </div>`, false);
+    const done = (fn) => {
+      fn();
+      closeModal();
+      if (game.s.phase === 'moving') runMove();
+      else { render(); save(); afterPhase(); }
+    };
+    $('#pickYes').addEventListener('click', () => done(() => game.pickLock()));
+    $('#pickNo').addEventListener('click', () => done(() => game.declinePick()));
   }
 
   function roll() {
@@ -315,6 +384,7 @@
     if (ui.busy) return;
     if (name === 'fireball') {
       ui.targeting = !ui.targeting && game.canCast('fireball');
+      if (ui.targeting) ui.aiming = false;
     } else if (name === 'noclip' || name === 'invis') {
       game.toggleArm(name);
     } else if (name === 'reroll' && game.canCast('reroll')) {
@@ -331,9 +401,9 @@
 
   /* Direction of a click/tap on the map, relative to the player: the legal
    * direction nearest the tap's angle, if it is within 45 degrees. */
-  function dirFromEvent(e) {
+  function dirFromEvent(e, dirs) {
     if (!game || !game.s.level) return null;
-    const legal = game.availableDirs();
+    const legal = dirs || (ui.aiming ? game.shotDirs() : game.availableDirs());
     if (!legal.length) return null;
     const svg = $('#board');
     const m = svg.getScreenCTM();
@@ -353,6 +423,7 @@
 
   function setupInput() {
     $('#journalBtn').addEventListener('click', () => { if (game) showJournal(); });
+    $('#slingBtn').addEventListener('click', toggleAim);
     const menuItems = $('#menuItems'), menuToggle = $('#menuToggle');
     const setMenu = (open) => { menuItems.classList.toggle('open', open); menuToggle.setAttribute('aria-expanded', String(open)); };
     menuToggle.addEventListener('click', (e) => { e.stopPropagation(); setMenu(!menuItems.classList.contains('open')); });
@@ -380,13 +451,20 @@
       if (ui.busy || (game.s.phase !== 'choose' && game.s.phase !== 'redirect')) return;
       const dir = dirFromEvent(e);
       if (dir) choose(dir);
-      else if (game.availableDirs().length) {
+      else if ((ui.aiming ? game.shotDirs() : game.availableDirs()).length) {
         board.classList.remove('nudge'); void board.getBoundingClientRect(); board.classList.add('nudge');
         setTimeout(() => board.classList.remove('nudge'), 1100);
       }
     });
     const setPreview = (dir) => {
-      const next = dir && !ui.busy && !ui.targeting ? game.previewPath(dir) : null;
+      let next = null;
+      if (dir && !ui.busy && !ui.targeting) {
+        // Aiming: the stone's path, cut off where you can't see.
+        if (ui.aiming) {
+          next = [];
+          for (const c of game.shotPath(dir).cells) { if (!game.isVisible(c[0], c[1])) break; next.push(c); }
+        } else next = game.previewPath(dir);
+      }
       if (JSON.stringify(next) === JSON.stringify(ui.preview)) return;
       ui.preview = next;
       renderPreview();
@@ -435,7 +513,7 @@
         else if (game.s.phase === 'choose' && !game.availableDirs().length) { e.preventDefault(); game.passTurn(); render(); save(); }
         return;
       }
-      if (e.key === 'Escape' && ui.targeting) { ui.targeting = false; render(); return; }
+      if (e.key === 'Escape' && (ui.targeting || ui.aiming)) { ui.targeting = false; ui.aiming = false; render(); return; }
       const dir = KEYMAP[e.key.length === 1 ? e.key.toLowerCase() : e.key];
       if (dir) { e.preventDefault(); choose(dir); }
     });
@@ -495,7 +573,7 @@
 
   function startWith(g) {
     game = g;
-    ui.boardKey = null; ui.targeting = false; ui.preview = null; ui.busy = false;
+    ui.boardKey = null; ui.targeting = false; ui.aiming = false; ui.shotFlash = null; ui.preview = null; ui.busy = false;
     ui.journalSeen = g.s.logSeq || 0;
     ui.toastSeq = (g.s.logSeq || 1) - 1;
     ui.hintQueue = []; ui.hintFloor = null; ui.hintsReady = true;
@@ -682,6 +760,10 @@
         ${legend('i-moon', 'Dark floor (from floor 6, never two in a row): you only see the squares next to you. Seen walls stay sketched; deeper down you stop remembering items (floor 20+) and then walls too (floor 35+). Seen stairs always stay marked.')}
         ${legend('i-torch', `Torch: every dark floor has one you can reach without keys. It lights at once and lets you see ${R.TORCH_RADIUS} squares (walls block light) until the floor ends. Torches bought in the shop are carried; tap the torch button to light one on a dark floor.`)}
         ${legend('i-darkchest', 'Dark chest: on every dark floor. Chest coins plus a random spell.')}
+        ${legend('i-sling', `Sling: after rolling, shoot instead of moving. The stone travels up to your roll in the roll's direction type and hits the first enemy for 1 damage, then your turn ends. You start with ${R.START_AMMO} stones.`)}
+        ${legend('i-body', 'Body: enemies killed in melee or by the sling leave one. Walk over it to collect 1–2 sling stones. Fireball leaves nothing.')}
+        ${legend('i-stalker', `Stalker (floor ${R.STALKER_FROM}+): after each turn, if it can see you it moves one square closer, attacking when adjacent. On dark floors it sees you only within 2 squares, or from anywhere while your torch is lit.`)}
+        ${legend('i-lockpick', 'Lock pick: walk into a locked door without its key and you can try the lock: d20 + DEX vs. gold 12, crimson 14, azure 16, emerald 18. Used up either way; failure stops your move. DEX +1 is always for sale in the shop.')}
       </div>
       <h3>Shops</h3>
       <p>Floor 5 is always a shop. After that a shop turns up every 4 to 10 floors, never more than twice in 10 floors. Heal and Strength +1 are always on sale, plus 4 random offers: Max Health +2, Gamble, or spells.</p>
@@ -743,9 +825,20 @@
     heal: { name: 'Healing Draught', desc: 'Restore health to full.', icon: 'i-sp-heal' },
     str: { name: 'Strength +1', desc: 'Strike enemies harder.', icon: 'i-sp-str' },
     maxhp: { name: 'Max Health +2', desc: 'Raise your maximum (and current) health by 2.', icon: 'i-sp-maxhp' },
+    dex: { name: 'Dexterity +1', desc: 'Better at picking locks: adds 1 to every lock-pick roll.', icon: 'i-sp-dex' },
+    ammo: { name: 'Sling stones ×3', desc: 'Three more shots for your sling.', icon: 'i-sling' },
+    lockpick: { name: 'Lock pick', desc: 'Try a locked door without its key: d20 + DEX against the door color. Used up either way.', icon: 'i-lockpick' },
     torch: { name: 'Torch', desc: `Carry it; light it on a dark floor to see ${R.TORCH_RADIUS} squares around you until the floor ends.`, icon: 'i-torch' },
     gamble: { name: 'Gamble', desc: 'Roll a die: 1-2 lose wager · 3-4 money back · 5 money back +2 · 6 win double.', icon: 'i-sp-gamble' },
   };
+  // "(own N)" next to shop items you can stock up on.
+  function ownLabel(id, p) {
+    const own = SPELLS[id] ? p.spells[id] : { torch: p.torches, ammo: p.ammo, lockpick: p.lockpicks }[id];
+    if (own !== undefined) return ` <span class="muted">(own ${own})</span>`;
+    if (id === 'dex') return ` <span class="muted">(DEX ${p.dex})</span>`;
+    if (id === 'str') return ` <span class="muted">(STR ${p.str})</span>`;
+    return '';
+  }
   let wager = 1;
 
   function showShop() {
@@ -773,7 +866,7 @@
       const full = it.id === 'heal' && p.hp >= p.maxHp;
       const label = it.sold ? 'Sold' : full ? 'Full health' : `Buy · ${price} ${RD.icon('i-coin', 'inline')}`;
       return `<div class="shop-item${it.sold ? ' sold' : ''}">
-        <div class="head">${RD.icon(info.icon)}<span class="name">${info.name}${SPELLS[it.id] ? ` <span class="muted">(own ${p.spells[it.id]})</span>` : it.id === 'torch' ? ` <span class="muted">(own ${p.torches})</span>` : ''}</span></div>
+        <div class="head">${RD.icon(info.icon)}<span class="name">${info.name}${ownLabel(it.id, p)}</span></div>
         <div class="desc">${info.desc}</div>
         <button class="btn" type="button" data-buy="${i}" ${game.canBuy(i) ? '' : 'disabled'}>${label}</button>
       </div>`;

@@ -24,7 +24,8 @@
     reroll: { name: 'Re-roll', desc: 'After rolling, re-roll one of the two dice.' },
     invis: { name: 'Invisibility', desc: 'Arm for one turn: pass through enemies without encountering them.' },
   };
-  const SHOP_POOL = ['maxhp', 'gamble', 'noclip', 'fireball', 'luck', 'reroll', 'invis', 'torch'];
+  const SHOP_POOL = ['maxhp', 'gamble', 'noclip', 'fireball', 'luck', 'reroll', 'invis', 'torch', 'ammo', 'lockpick'];
+  const SHOP_FIXED = ['heal', 'str', 'dex'];
   const CHECKPOINT_VERSION = 2;
 
   function randomSeedText() {
@@ -50,12 +51,14 @@
         player: {
           x: 0, y: 0, hp: R.START_HP, maxHp: R.START_HP, str: R.START_STR, coins: 0,
           keys: [], webbed: false, torches: 0,
+          ammo: R.START_AMMO, dex: 1, lockpicks: 0,
           spells: { noclip: 0, fireball: 0, luck: 0, reroll: 0, invis: 0 },
         },
         diceState: 0,
         dice: null, steps: 0, parity: null, halved: false,
         usedDirs: [], turnPath: [], move: null,
         armed: { noclip: false, invis: false }, invisUsed: false,
+        declinedPicks: [], pickTarget: -1,
         level: null, shop: null,
         log: [], logSeq: 0,
         stats: { kills: 0, coins: 0, floorsCleared: 0 },
@@ -85,7 +88,10 @@
         v: CHECKPOINT_VERSION,
         seedText: s.seedText,
         floor,
-        player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, torches: p.torches, spells: Object.assign({}, p.spells) },
+        player: {
+          hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, torches: p.torches,
+          ammo: p.ammo, dex: p.dex, lockpicks: p.lockpicks, spells: Object.assign({}, p.spells),
+        },
         stats: Object.assign({}, s.stats),
         turn: s.turn,
       };
@@ -102,7 +108,11 @@
       const p = cp.player;
       if (!obj(p) || !int(p.maxHp, 1, 100000) || !int(p.hp, 1, p.maxHp) || !int(p.str, 0, 100000) || !int(p.coins, 0, 1e9)) return 'bad player stats';
       if (!obj(p.spells) || !Object.keys(SPELLS).every((k) => int(p.spells[k], 0, 10000))) return 'bad spells';
-      if (p.torches !== undefined && !int(p.torches, 0, 10000)) return 'bad torches'; // optional: older saves have none
+      // Optional fields: older saves don't have them and get defaults.
+      if (p.torches !== undefined && !int(p.torches, 0, 10000)) return 'bad torches';
+      if (p.ammo !== undefined && !int(p.ammo, 0, 10000)) return 'bad ammo';
+      if (p.dex !== undefined && !int(p.dex, 0, 1000)) return 'bad dexterity';
+      if (p.lockpicks !== undefined && !int(p.lockpicks, 0, 10000)) return 'bad lock picks';
       if (cp.stats !== undefined && !(obj(cp.stats) && ['kills', 'coins', 'floorsCleared'].every((k) => int(cp.stats[k], 0, 1e9)))) return 'bad stats';
       if (cp.turn !== undefined && !int(cp.turn, 0, 1e9)) return 'bad turn';
       return null;
@@ -129,7 +139,13 @@
       if (why) return { error: why };
       const g = new Game(Game.newState(cp.seedText.trim()));
       const s = g.s, p = s.player;
-      Object.assign(p, { hp: cp.player.hp, maxHp: cp.player.maxHp, str: cp.player.str, coins: cp.player.coins, torches: cp.player.torches || 0 });
+      const cpp = cp.player;
+      Object.assign(p, {
+        hp: cpp.hp, maxHp: cpp.maxHp, str: cpp.str, coins: cpp.coins, torches: cpp.torches || 0,
+        ammo: cpp.ammo === undefined ? R.START_AMMO : cpp.ammo,
+        dex: cpp.dex === undefined ? 1 : cpp.dex,
+        lockpicks: cpp.lockpicks || 0,
+      });
       for (const k of Object.keys(SPELLS)) p.spells[k] = cp.player.spells[k];
       if (cp.stats) Object.assign(s.stats, { kills: cp.stats.kills, coins: cp.stats.coins, floorsCleared: cp.stats.floorsCleared });
       s.turn = cp.turn || 0;
@@ -199,6 +215,14 @@
       if (ok && dx && dy && this.isSolid(fx + dx, fy) && this.isSolid(fx, fy + dy)) ok = false;
       if (ok) return { kind: 'normal', x: nx, y: ny, walls: 0 };
 
+      // A locked door you hold a lock pick for (and haven't declined this turn).
+      const door = this.obj(nx, ny);
+      if (door && door.type === 'lock' && !p.keys.includes(door.color) && p.lockpicks > 0 &&
+          !(this.s.declinedPicks || []).includes(ny * this.s.level.w + nx) &&
+          !(dx && dy && this.isSolid(fx + dx, fy) && this.isSolid(fx, fy + dy))) {
+        return { kind: 'pick', x: nx, y: ny, walls: 0 };
+      }
+
       if (this.s.armed.noclip) {
         let k = 0, cx = nx, cy = ny;
         while (this.inB(cx, cy) && this.isSolid(cx, cy)) { k++; cx += dx; cy += dy; }
@@ -240,6 +264,7 @@
       while (steps > 0) {
         const m = this.legalMove(dir, steps, x, y);
         if (!m || !this.isVisible(m.x, m.y)) break;
+        if (m.kind === 'pick') { out.push([m.x, m.y]); break; }
         x = m.x; y = m.y; steps -= m.walls + 1;
         out.push([x, y]);
         const o = this.obj(x, y);
@@ -255,6 +280,7 @@
       s.floor = f;
       s.dice = null; s.move = null; s.usedDirs = []; s.turnPath = []; s.halved = false;
       s.armed = { noclip: false, invis: false }; s.invisUsed = false;
+      s.declinedPicks = []; s.pickTarget = -1;
       p.keys = []; p.webbed = false;
       s.floorStartTurn = s.turn;
       // Dice restart per floor, so a floor replays identically from its checkpoint.
@@ -400,12 +426,15 @@
       s.move = null;
       s.usedDirs = [];
       s.turnPath = [];
+      s.declinedPicks = [];
+      s.pickTarget = -1;
       s.turn++;
     }
 
     endTurn(msg, kind) {
       if (msg) this.log(msg, kind);
       this.finishTurnFlags();
+      if (this.s.phase !== 'dead') this.moveStalkers();
       if (this.s.phase !== 'dead') this.s.phase = 'roll';
     }
 
@@ -442,6 +471,13 @@
         return { type: 'redirect' };
       }
 
+      if (lm.kind === 'pick') {
+        const door = this.obj(lm.x, lm.y);
+        s.phase = 'pickPrompt';
+        s.pickTarget = this.objIndex(door);
+        return { type: 'pick', door };
+      }
+
       if (lm.kind === 'noclip') {
         const [dx, dy] = DIRS[m.dir];
         for (let k = 1; k <= lm.walls; k++) this.moveTo(p.x + dx, p.y + dy);
@@ -458,20 +494,9 @@
           s.invisUsed = true;
           this.log('You slip past an enemy unseen.', 'spell');
         } else {
-          const dmg = R.enemyDamage(s.floor);
-          p.hp = Math.max(0, p.hp - dmg);
-          o.hp -= p.str;
-          if (o.hp <= 0) {
-            this.clearObj(o);
-            s.stats.kills++;
-            this.log(`You take ${dmg} damage and slay the enemy!`, 'fight');
-            if (p.hp <= 0) { this.die(); return { type: 'dead' }; }
-          } else {
-            this.log(`You take ${dmg} damage and wound the enemy (${o.hp}/${o.maxHp} left). It blocks your path.`, 'fight');
-            if (p.hp <= 0) { this.die(); return { type: 'dead' }; }
-            this.endTurn();
-            return { type: 'fight' };
-          }
+          const r = this.encounter(o);
+          if (r === 'dead') return { type: 'dead' };
+          if (r === 'survived') { this.endTurn(); return { type: 'fight' }; }
         }
       } else if (o && o.type === 'lock') {
         this.clearObj(o);
@@ -518,6 +543,16 @@
             this.log(`Dark chest! ${v} coins and a ${SPELLS[spell].name} spell.`, 'good');
             break;
           }
+          case 'body':
+            p.ammo += o.ammo;
+            this.clearObj(o);
+            this.log(`You gather ${o.ammo} sling stone${o.ammo > 1 ? 's' : ''} from the body.`, 'good');
+            break;
+          case 'lockpick':
+            p.lockpicks++;
+            this.clearObj(o);
+            this.log('You found a lock pick.', 'good');
+            break;
           case 'torch':
             this.clearObj(o);
             L.torchLit = true;
@@ -560,6 +595,166 @@
       }
       if (s.move.stepsLeft <= 0) { this.endTurn(); return ev.type === 'teleport' ? ev : { type: 'end' }; }
       return ev;
+    }
+
+    // ----------------------------------------------------------------- combat
+    /* One melee exchange with an enemy (you walking into it, or a stalker
+     * reaching you): it deals floor damage, you strike back with STR.
+     * Returns 'killed', 'survived' or 'dead'. */
+    encounter(o) {
+      const s = this.s, p = s.player;
+      const dmg = R.enemyDamage(s.floor);
+      const name = o.stalker ? 'stalker' : 'enemy';
+      p.hp = Math.max(0, p.hp - dmg);
+      o.hp -= p.str;
+      if (o.hp <= 0) {
+        this.killEnemy(o, true);
+        this.log(`You take ${dmg} damage and slay the ${name}!`, 'fight');
+      } else {
+        this.log(`You take ${dmg} damage and wound the ${name} (${o.hp}/${o.maxHp} left).`, 'fight');
+      }
+      if (p.hp <= 0) { this.die(); return 'dead'; }
+      return o.hp <= 0 ? 'killed' : 'survived';
+    }
+
+    // Removes a dead enemy; melee and sling kills leave a body with 1-2 ammo.
+    killEnemy(o, dropBody) {
+      const L = this.s.level;
+      this.clearObj(o);
+      this.s.stats.kills++;
+      if (!dropBody) return;
+      const body = { type: 'body', x: o.x, y: o.y, ammo: this.d(2) };
+      L.objects.push(body);
+      this.objAt[o.y * L.w + o.x] = L.objects.length - 1;
+    }
+
+    // ------------------------------------------------------------------ sling
+    canShoot() {
+      const s = this.s;
+      return !!(s.level && s.phase === 'choose' && s.player.ammo > 0);
+    }
+
+    // Directions of the roll's type with at least one open square to fly through.
+    shotDirs() {
+      if (!this.canShoot()) return [];
+      return (this.s.parity === 'ortho' ? ORTHO : DIAG).filter((d) => this.shotPath(d).cells.length > 0);
+    }
+
+    /* Squares a shot crosses: up to the move total, stopping before walls and
+     * locked doors, and at the first enemy. */
+    shotPath(dir) {
+      const s = this.s, [dx, dy] = DIRS[dir];
+      let { x, y } = s.player;
+      const cells = [];
+      let target = null;
+      for (let k = 0; k < s.steps; k++) {
+        const nx = x + dx, ny = y + dy;
+        if (this.isSolid(nx, ny)) break;
+        if (dx && dy && this.isSolid(x + dx, y) && this.isSolid(x, y + dy)) break;
+        x = nx; y = ny;
+        cells.push([x, y]);
+        const o = this.obj(x, y);
+        if (o && o.type === 'enemy') { target = o; break; }
+      }
+      return { cells, target };
+    }
+
+    // Shoot instead of moving: 1 damage to the first enemy in line; ends the turn.
+    shoot(dir) {
+      const s = this.s, p = s.player;
+      if (!this.shotDirs().includes(dir)) return null;
+      const { cells, target } = this.shotPath(dir);
+      p.ammo--;
+      if (target) {
+        target.hp -= 1;
+        const name = target.stalker ? 'stalker' : 'enemy';
+        if (target.hp <= 0) { this.killEnemy(target, true); this.log(`Your sling stone fells the ${name}!`, 'fight'); }
+        else this.log(`Your sling stone hits the ${name} (${target.hp}/${target.maxHp} left).`, 'fight');
+      } else {
+        this.log('Your sling stone clatters off the wall.', 'info');
+      }
+      this.endTurn();
+      return { cells, hit: !!target };
+    }
+
+    // --------------------------------------------------------------- stalkers
+    // A stalker notices you by line of sight; on dark floors only within 2
+    // squares, unless your torch is lit (then from any distance).
+    stalkerSees(o) {
+      const s = this.s, L = s.level, p = s.player;
+      const dist = Math.max(Math.abs(o.x - p.x), Math.abs(o.y - p.y));
+      if (L.dark && !L.torchLit && dist > 2) return false;
+      return this.lineOfSight(o.x, o.y, p.x, p.y);
+    }
+
+    // After each turn, every stalker that notices you moves 1 square closer,
+    // or attacks if it is already next to you.
+    moveStalkers() {
+      const s = this.s, L = s.level, p = s.player;
+      if (!L || !this.objAt) return;
+      const stalkers = L.objects.filter((o) => o.type === 'enemy' && o.stalker && !o.done);
+      for (const o of stalkers) {
+        if (s.phase === 'dead' || o.done || !this.stalkerSees(o)) continue;
+        const cheb = (x, y) => Math.max(Math.abs(x - p.x), Math.abs(y - p.y));
+        const man = (x, y) => Math.abs(x - p.x) + Math.abs(y - p.y);
+        let best = null, bestKey = [cheb(o.x, o.y), man(o.x, o.y), 2];
+        for (const d of ORTHO.concat(DIAG)) {
+          const [dx, dy] = DIRS[d];
+          const nx = o.x + dx, ny = o.y + dy;
+          if (dx && dy && this.isSolid(o.x + dx, o.y) && this.isSolid(o.x, o.y + dy)) continue;
+          if (nx === p.x && ny === p.y) { best = { attack: true }; break; }
+          if (!this.inB(nx, ny) || this.tile(nx, ny) === 0 || this.obj(nx, ny)) continue;
+          const key = [cheb(nx, ny), man(nx, ny), dx && dy ? 1 : 0];
+          if (key[0] < bestKey[0] || (key[0] === bestKey[0] && (key[1] < bestKey[1] || (key[1] === bestKey[1] && key[2] < bestKey[2])))) {
+            best = { x: nx, y: ny }; bestKey = key;
+          }
+        }
+        if (!best) continue;
+        if (best.attack) {
+          this.log('A stalker lunges at you!', 'fight');
+          this.encounter(o);
+        } else {
+          const i = this.objIndex(o);
+          this.objAt[o.y * L.w + o.x] = -1;
+          o.x = best.x; o.y = best.y;
+          this.objAt[o.y * L.w + o.x] = i;
+        }
+      }
+    }
+
+    // -------------------------------------------------------------- lock pick
+    pickDoor() {
+      const s = this.s;
+      return s.phase === 'pickPrompt' && s.pickTarget >= 0 ? s.level.objects[s.pickTarget] : null;
+    }
+
+    // Roll d20 + DEX against the door's target. Either way the pick is used up.
+    pickLock() {
+      const s = this.s, p = s.player, door = this.pickDoor();
+      if (!door) return null;
+      const roll = this.d(20), total = roll + p.dex, target = R.LOCK_TARGET[door.color];
+      p.lockpicks--;
+      s.pickTarget = -1;
+      if (total >= target) {
+        this.clearObj(door);
+        this.log(`Lock pick: ${roll} + ${p.dex} DEX = ${total} (needed ${target}). The ${door.color} door clicks open!`, 'good');
+        this.updateVision();
+        s.phase = 'moving';
+        return { ok: true, roll, total, target };
+      }
+      this.log(`Lock pick: ${roll} + ${p.dex} DEX = ${total} (needed ${target}). The pick snaps.`, 'status');
+      this.endTurn();
+      return { ok: false, roll, total, target };
+    }
+
+    // Leave the door alone: it counts as solid for the rest of this turn.
+    declinePick() {
+      const s = this.s, door = this.pickDoor();
+      if (!door) return false;
+      s.declinedPicks.push(door.y * s.level.w + door.x);
+      s.pickTarget = -1;
+      s.phase = 'moving';
+      return true;
     }
 
     gainCoins(v) { this.s.player.coins += v; this.s.stats.coins += v; }
@@ -635,7 +830,7 @@
       this.clearObj(o);
       o.burned = true;
       s.player.spells.fireball--;
-      if (o.type === 'enemy') s.stats.kills++;
+      if (o.type === 'enemy') s.stats.kills++; // no body: nothing left to loot
       this.updateVision(); // a burned door can open a line of sight
       const what = o.type === 'lock' ? `the ${o.color} door` : o.type === 'web' ? 'a web' : 'an enemy';
       this.log(`Fireball! You incinerate ${what}.`, 'spell');
@@ -646,7 +841,7 @@
     makeShop(f) {
       const rng = new RNG(seedFor(this.s.seed, 'shop', f));
       const random = rng.shuffle(SHOP_POOL.slice()).slice(0, 4);
-      return { floor: f, items: ['heal', 'str', ...random].map((id) => ({ id, sold: false })), lastGamble: null };
+      return { floor: f, items: [...SHOP_FIXED, ...random].map((id) => ({ id, sold: false })), lastGamble: null };
     }
 
     price(id) {
@@ -661,6 +856,9 @@
         case 'reroll': return 3 + t;
         case 'invis': return 6 + t;
         case 'torch': return 4 + t;
+        case 'dex': return 8 + 4 * (p.dex - 1) + 2 * t;
+        case 'ammo': return 3 + t;
+        case 'lockpick': return 4 + t;
       }
       return 0;
     }
@@ -684,6 +882,9 @@
         case 'str': p.str++; this.log(`Strength increased to ${p.str}.`, 'shop'); break;
         case 'maxhp': p.maxHp += 2; p.hp += 2; it.sold = true; this.log('Max health +2.', 'shop'); break;
         case 'torch': p.torches++; it.sold = true; this.log('Bought a torch. Light it on a dark floor.', 'shop'); break;
+        case 'dex': p.dex++; this.log(`Dexterity increased to ${p.dex}.`, 'shop'); break;
+        case 'ammo': p.ammo += 3; it.sold = true; this.log('Bought 3 sling stones.', 'shop'); break;
+        case 'lockpick': p.lockpicks++; it.sold = true; this.log('Bought a lock pick.', 'shop'); break;
         default:
           p.spells[it.id]++;
           it.sold = true;
