@@ -35,6 +35,8 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
   - **Invisibility:** pass through enemies for one turn.
   - No Clipping and Invisibility are "armed" first, and a charge is used up only if the spell actually takes effect.
 
+**Sound:** sound effects and ambient music, all generated in the browser with Web Audio. There are no audio files. The music changes with the floor: calm in the tutorial, tense on dark floors, cheerful in shops. Sound starts after your first tap. Set volumes from **Sound** in the menu, or press **M** to mute.
+
 **Controls:** tap Roll in the center of the direction pad, then tap anywhere on the map in the direction you want to go (or use the pad or keyboard). The layout adapts to desktop, phone portrait and phone landscape. The journal sits behind a button, and important events pop up briefly over the map.
 
 The game seed decides every floor, so the same seed always gives the same dungeon. **Saving:** the game saves a small checkpoint each time you reach a new floor: the seed, the floor number, your stats, coins and spells. The floor itself is rebuilt from the seed, so loading restarts that floor from its beginning, and progress inside a floor isn't saved. The **Saves** menu offers up to 12 named slots in the browser, a copyable save code, and export/import of a `.json` save file.
@@ -46,4 +48,5 @@ The game seed decides every floor, so the same seed always gives the same dungeo
 - `js/levelgen.js`: room layout (BSP), doorways, locks and keys, portals, and placement of items and obstacles.
 - `js/game.js`: game state and the turn and movement engine. It has no DOM code.
 - `js/render.js`: SVG symbols, the board, and the dice.
+- `js/audio.js`: generated sound effects and music (Web Audio).
 - `js/ui.js`: input, animation, modals, and the shop.

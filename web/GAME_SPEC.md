@@ -245,6 +245,7 @@ web/
 ├── js/levelgen.js    generateLevel, reach                (needs rng, rules)
 ├── js/game.js        Game class: state machine & rules   (needs all above)
 ├── js/render.js      SVG symbols & board/dice markup     (needs DC only)
+├── js/audio.js       Web Audio sound effects & music       (needs rng)
 ├── js/ui.js          DOM, input, animation, modals, save (needs all)
 └── tests/run-tests.js  Node test suite (loads rng, rules, levelgen, game)
 ```
@@ -264,7 +265,8 @@ This lets the same files run in the browser and under Node (`require` puts them 
 **Layering rules.**
 - `game.js` and everything below it must never touch the DOM. That is what makes them testable in Node.
 - `render.js` returns markup strings and never changes game state.
-- `ui.js` is the only file that changes the page or calls `localStorage`.
+- `ui.js` is the only file that changes the page. `audio.js` also uses `localStorage`, but only for its own volume settings.
+- The engine never plays sound. It records what happened with `this.emit(type)`; the UI drains `game.drainEvents()` and hands each event to `DC.audio.sfx()`.
 
 ---
 
@@ -547,6 +549,46 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
     - **Phone portrait** (≤ 860 px wide): the map fills the screen and the controls dock at the bottom.
     - **Phone landscape** (≤ 560 px tall): the map on the left and a slim control column on the right.
   - On narrow or short screens, the brand and turn counter are hidden, and the menu buttons fold into a ☰ dropdown (`#menuToggle`, `#menuItems`).
+- **Sound** (`audio.js`, `DC.audio`).
+  - Everything is synthesized with the Web Audio API. There are no audio files. Without Web Audio, every call does nothing.
+  - **Starting:** browsers block audio until a gesture, so `unlock()` runs on the first `pointerdown` or `keydown`. It creates or resumes the `AudioContext` and starts any music that was waiting.
+  - **Signal chain:** master gain → compressor → output, with an `sfxBus` and a `musicBus`. The context is suspended while the tab is hidden.
+  - **Effects:** `sfx(name)` plays a short recipe made of tone and noise envelopes. The engine events map 1:1 to recipe names:
+
+    | Event | When |
+    |---|---|
+    | `roll` | rolling, Re-roll, a neutral gamble |
+    | `step` | each square moved |
+    | `blocked` | a redirect is needed |
+    | `web` | caught in a web |
+    | `hurt`, `hit`, `kill` | in `encounter()` and `shoot()` |
+    | `coin`, `chest`, `heal`, `key`, `ammo`, `pickup`, `torch` | picking things up |
+    | `door` | a key opens a door |
+    | `pickOk`, `pickFail` | lock-pick results |
+    | `portal` | teleporting |
+    | `shoot`, `miss` | the sling |
+    | `stalker` | a stalker moves |
+    | `spell` | No Clipping, Invisibility, Dark One's Luck, arming a spell |
+    | `fireball` | Fireball |
+    | `stairs` | `completeFloor()` |
+    | `death` | `die()` |
+    | `buy`, `gambleWin`, `gambleLose` | the shop |
+
+    A limiter allows at most 4 copies of one sound per 100 ms (2 for footsteps).
+  - **Music:** `setMusic(mood, seed, floor)`. `syncMusic()` in `ui.js` picks the mood:
+
+    | Mood | When | Sound |
+    |---|---|---|
+    | `none` | start screen and death | silence |
+    | `shop` | shop floors | major pentatonic jingle |
+    | `dark` | dark floors | low Phrygian drone, sparse plucks, wind noise |
+    | `tutorial` | floors 1–3 | gentle major pentatonic |
+    | `floor` | everything else | seeded root note and mode (Aeolian, Dorian or minor pentatonic) |
+
+    Each voice is a detuned drone through a slowly swept low-pass filter, plus plucked notes scheduled ahead of time through a feedback delay. Mood changes crossfade over about 2 s.
+  - **Settings:** `localStorage` key `dicedelve-audio-v1` holds `{sfx, music, sfxOn, musicOn, muted}`, set from the **Sound** menu modal (`showSound`). **M** toggles mute.
+  - **Debugging:** `DC.audio.recent` lists the last effect names played. `DC.audio.mood` is the current music mood.
+  - **To add a sound:** call `this.emit('name')` at the right place in `game.js`, then add a `name()` recipe to `SFX` in `audio.js`.
 - **Hints.**
   - One-time tips (`HINTS` in `ui.js`) are shown with `openModal`. Each has a "Don't show hints" checkbox.
   - `checkHints()` runs at the end of every `render()`, once `startWith()` has set `ui.hintsReady`. It queues hints as follows:
@@ -612,6 +654,7 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
 - **Level invariants** for floors 1–80 on 6 seeds: room size ≥ 3×3, closed border, object placement, lock walls on opposite sides, one key per lock, keys reachable with all locks closed, full connectivity, stairs reachable, portal pairing and lock zones, obstacles present.
 - **Determinism:** the same seed gives the same level.
 - **Scripted scenarios** on small hand-made maps (`sandbox([...rows])`, where `#` is wall, `D` is doorway, `@` is start and `>` is stairs). They cover parity, sliding, redirect and no doubling back, webs, combat, keys and locks, portals, every spell, and the shop and gamble payouts.
+- **Sound events:** a move emits `roll`, `step`, `coin`, `hurt`, `kill` and `web` as it happens. Shots emit `shoot` plus `hit` or `miss`, and you also get `stairs` and `pickFail`. `drainEvents()` empties the list, and events never appear in the state or in checkpoints. `audio.js` isn't loaded in Node; check it in a browser through `DC.audio.recent` and `DC.audio.mood`.
 - **Sling, stalkers and lock picks:**
   - Shots: range, walls, the first enemy, ammo, the turn ending, and no shots straight into a wall.
   - Bodies from melee and sling kills (none from Fireball), and collecting their ammo.

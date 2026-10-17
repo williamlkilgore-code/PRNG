@@ -3,6 +3,8 @@
   const DC = window.DC;
   const { Game, SPELLS, rules: R } = DC;
   const RD = DC.render;
+  // Sound is optional: without audio.js (or Web Audio) these do nothing.
+  const AU = DC.audio || { sfx() {}, setMusic() {}, unlock() {}, setVolume() {}, setOn() {}, toggleMute() { return true; }, settings: {}, available: false };
   const $ = (sel) => document.querySelector(sel);
   const SAVE_KEY = 'dicedelve-save-v1';
   const SLOTS_KEY = 'dicedelve-slots-v1';
@@ -54,7 +56,55 @@
     renderHud();
     renderBoard();
     renderPanel();
+    playEvents();
+    syncMusic();
     checkHints();
+  }
+
+  // ------------------------------------------------------------------- sound
+  // Engine events (coin, hit, web, ...) become sound effects; the music
+  // follows the floor's mood.
+  function playEvents() {
+    for (const e of game.drainEvents()) AU.sfx(e);
+  }
+  function syncMusic() {
+    const s = game.s;
+    let mood = 'floor';
+    if (!ui.hintsReady || s.phase === 'dead') mood = 'none';
+    else if (s.shop) mood = 'shop';
+    else if (s.level && s.level.dark) mood = 'dark';
+    else if (s.floor <= 3) mood = 'tutorial';
+    AU.setMusic(mood, s.seed, s.floor);
+  }
+
+  function showSound() {
+    const st = AU.settings;
+    const row = (bus, label) => `
+      <div class="sound-row">
+        <label class="check"><input type="checkbox" id="${bus}On" ${st[bus + 'On'] ? 'checked' : ''}> ${label}</label>
+        <input type="range" id="${bus}Vol" min="0" max="100" value="${Math.round((st[bus] || 0) * 100)}" aria-label="${label} volume">
+      </div>`;
+    openModal(`
+      <h2>Sound</h2>
+      ${AU.available ? '' : '<p class="notice bad">This browser doesn\'t support Web Audio, so the game is silent.</p>'}
+      ${row('sfx', 'Sound effects')}
+      ${row('music', 'Music')}
+      <label class="check"><input type="checkbox" id="muteAll" ${st.muted ? 'checked' : ''}> Mute everything <span class="muted">(M key)</span></label>
+      <p class="muted">All sounds are generated in your browser. The music changes with the floor: calmer in the tutorial, tense on dark floors, cheerful in shops.</p>
+      <div class="row">
+        <button class="btn" type="button" id="soundTest">Test</button>
+        <button class="btn primary" type="button" data-close>Done</button>
+      </div>`);
+    ['sfx', 'music'].forEach((bus) => {
+      $(`#${bus}On`).addEventListener('change', (e) => AU.setOn(bus, e.target.checked));
+      $(`#${bus}Vol`).addEventListener('input', (e) => AU.setVolume(bus, e.target.value / 100));
+    });
+    $('#muteAll').addEventListener('change', (e) => { if (AU.settings.muted !== e.target.checked) AU.toggleMute(); renderSoundBtn(); });
+    $('#soundTest').addEventListener('click', () => { AU.unlock(); AU.sfx('coin'); });
+  }
+  function renderSoundBtn() {
+    const b = $('#soundBtn');
+    if (b) b.classList.toggle('muted-btn', !!AU.settings.muted);
   }
 
   // ------------------------------------------------------------------- hints
@@ -424,6 +474,12 @@
   function setupInput() {
     $('#journalBtn').addEventListener('click', () => { if (game) showJournal(); });
     $('#slingBtn').addEventListener('click', toggleAim);
+    $('#soundBtn').addEventListener('click', () => showSound());
+    // Browsers only allow sound after a gesture: start audio on the first one.
+    const unlock = () => AU.unlock();
+    document.addEventListener('pointerdown', unlock, true);
+    document.addEventListener('keydown', unlock, true);
+    renderSoundBtn();
     const menuItems = $('#menuItems'), menuToggle = $('#menuToggle');
     const setMenu = (open) => { menuItems.classList.toggle('open', open); menuToggle.setAttribute('aria-expanded', String(open)); };
     menuToggle.addEventListener('click', (e) => { e.stopPropagation(); setMenu(!menuItems.classList.contains('open')); });
@@ -513,6 +569,7 @@
         else if (game.s.phase === 'choose' && !game.availableDirs().length) { e.preventDefault(); game.passTurn(); render(); save(); }
         return;
       }
+      if (e.key === 'm' || e.key === 'M') { AU.toggleMute(); renderSoundBtn(); return; }
       if (e.key === 'Escape' && (ui.targeting || ui.aiming)) { ui.targeting = false; ui.aiming = false; render(); return; }
       const dir = KEYMAP[e.key.length === 1 ? e.key.toLowerCase() : e.key];
       if (dir) { e.preventDefault(); choose(dir); }
@@ -775,6 +832,8 @@
       <p class="muted">Tap Roll in the middle of the direction pad. Then tap anywhere on the map in the direction you want to go (the nearest allowed direction is used), or tap an arrow on the pad. The Journal button keeps a log of everything that happened. Keyboard: Space/Enter: roll · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too.</p>
       <h3>Saving</h3>
       <p>The game saves a checkpoint each time you reach a new floor. A checkpoint holds your seed, the floor, your stats, coins and spells. The floor itself is rebuilt from the seed, so loading always restarts that floor from its beginning (same layout, same dice). Progress inside a floor isn't saved. Use <b>Saves</b> for named save slots, a copyable save code, or a save file.</p>
+      <h3>Sound</h3>
+      <p>Sound effects and ambient music are generated in your browser and start after your first tap. Open <b>Sound</b> in the menu to set volumes, or press <b>M</b> to mute.</p>
       <h3>Tutorial and hints</h3>
       <p>Floors 1 to 3 are a short tutorial: one room, then two rooms with webs, then a small dungeon with every feature. You can skip it from the New game screen. Hint pop-ups explain each new thing the first time you meet it.</p>
       <div class="row">

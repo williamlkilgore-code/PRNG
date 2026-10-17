@@ -37,8 +37,13 @@
   class Game {
     constructor(state) {
       this.s = state;
+      // Things that just happened (for sound effects). Not part of the saved state.
+      this.events = [];
       this.rebuildIndex();
     }
+
+    emit(type) { if (this.events) this.events.push(type); }
+    drainEvents() { const e = this.events || []; this.events = []; return e; }
 
     static newState(seedText) {
       return {
@@ -355,6 +360,7 @@
       if (!this.canLightTorch()) return false;
       this.s.player.torches--;
       this.s.level.torchLit = true;
+      this.emit('torch');
       this.log('You light a torch. It will burn until you leave this floor.', 'status');
       this.updateVision();
       return true;
@@ -365,6 +371,7 @@
       this.finishTurnFlags();
       s.stats.floorsCleared++;
       s.phase = 'levelDone';
+      this.emit('stairs');
       s.summary = { floor: s.floor, turns: s.turn - s.floorStartTurn, next: s.floor + 1, nextIsShop: R.isShopFloor(s.seed, s.floor + 1) };
       s.checkpoint = this.checkpointFor(s.floor + 1);
       this.log(`You descend the stairs of floor ${s.floor}!`, 'floor');
@@ -388,6 +395,7 @@
       const s = this.s, p = s.player;
       if (s.phase !== 'roll') return false;
       s.dice = [this.d(6), this.d(6)];
+      this.emit('roll');
       s.halved = p.webbed;
       p.webbed = false;
       s.usedDirs = [];
@@ -440,6 +448,7 @@
 
     die() {
       this.s.phase = 'dead';
+      this.emit('death');
       this.s.move = null;
       this.log('You have fallen in the dungeon.', 'bad');
     }
@@ -467,6 +476,7 @@
           this.endTurn(`Blocked with ${m.stepsLeft} move${m.stepsLeft > 1 ? 's' : ''} left and nowhere to go.`);
           return { type: 'end' };
         }
+        this.emit('blocked');
         this.log(`Blocked! ${m.stepsLeft} move${m.stepsLeft > 1 ? 's' : ''} left: pick a new direction.`, 'warn');
         return { type: 'redirect' };
       }
@@ -484,6 +494,7 @@
         m.stepsLeft -= lm.walls;
         s.armed.noclip = false;
         p.spells.noclip--;
+        this.emit('spell');
         this.log('You phase straight through the wall!', 'spell');
       }
 
@@ -492,6 +503,7 @@
       if (o && o.type === 'enemy') {
         if (s.armed.invis) {
           s.invisUsed = true;
+          this.emit('spell');
           this.log('You slip past an enemy unseen.', 'spell');
         } else {
           const r = this.encounter(o);
@@ -501,10 +513,12 @@
       } else if (o && o.type === 'lock') {
         this.clearObj(o);
         p.keys.splice(p.keys.indexOf(o.color), 1);
+        this.emit('door');
         this.log(`Your ${o.color} key opens the door.`, 'good');
       }
 
       this.moveTo(lm.x, lm.y);
+      this.emit('step');
       return this.onEnter(lm.x, lm.y);
     }
 
@@ -513,6 +527,9 @@
       if (x === L.stairs.x && y === L.stairs.y) { this.completeFloor(); return { type: 'stairs' }; }
       const o = this.obj(x, y);
       let ev = { type: 'step' };
+      const sound = { coin: 'coin', chest: 'chest', darkchest: 'chest', body: 'ammo', lockpick: 'pickup', torch: 'torch',
+        heart: 'heal', medpack: 'heal', key: 'key', web: 'web', portal: 'portal' };
+      if (o && sound[o.type]) this.emit(sound[o.type]);
       if (o) {
         switch (o.type) {
           case 'coin': {
@@ -607,6 +624,8 @@
       const name = o.stalker ? 'stalker' : 'enemy';
       p.hp = Math.max(0, p.hp - dmg);
       o.hp -= p.str;
+      this.emit('hurt');
+      this.emit(o.hp <= 0 ? 'kill' : 'hit');
       if (o.hp <= 0) {
         this.killEnemy(o, true);
         this.log(`You take ${dmg} damage and slay the ${name}!`, 'fight');
@@ -665,6 +684,8 @@
       if (!this.shotDirs().includes(dir)) return null;
       const { cells, target } = this.shotPath(dir);
       p.ammo--;
+      this.emit('shoot');
+      this.emit(!target ? 'miss' : target.hp <= 1 ? 'kill' : 'hit');
       if (target) {
         target.hp -= 1;
         const name = target.stalker ? 'stalker' : 'enemy';
@@ -717,6 +738,7 @@
           const i = this.objIndex(o);
           this.objAt[o.y * L.w + o.x] = -1;
           o.x = best.x; o.y = best.y;
+          this.emit('stalker');
           this.objAt[o.y * L.w + o.x] = i;
         }
       }
@@ -737,11 +759,13 @@
       s.pickTarget = -1;
       if (total >= target) {
         this.clearObj(door);
+        this.emit('pickOk');
         this.log(`Lock pick: ${roll} + ${p.dex} DEX = ${total} (needed ${target}). The ${door.color} door clicks open!`, 'good');
         this.updateVision();
         s.phase = 'moving';
         return { ok: true, roll, total, target };
       }
+      this.emit('pickFail');
       this.log(`Lock pick: ${roll} + ${p.dex} DEX = ${total} (needed ${target}). The pick snaps.`, 'status');
       this.endTurn();
       return { ok: false, roll, total, target };
@@ -784,6 +808,7 @@
       s.dice[i] = this.d(6);
       s.player.spells.reroll--;
       this.computeSteps();
+      this.emit('roll');
       this.log(`Re-roll: die ${i + 1} ${old} → ${s.dice[i]}. Move ${s.steps}, ${s.parity === 'ortho' ? 'orthogonal' : 'diagonal'}.`, 'spell');
       return true;
     }
@@ -795,6 +820,7 @@
       s.dice = [a, b];
       s.player.spells.luck--;
       this.computeSteps();
+      this.emit('spell');
       this.log(`Dark One's Luck bends fate: ${a} + ${b}. Move ${s.steps}, ${s.parity === 'ortho' ? 'orthogonal' : 'diagonal'}.`, 'spell');
       return true;
     }
@@ -810,6 +836,7 @@
       }
       if (!this.canCast(name)) return false;
       s.armed[name] = true;
+      this.emit('spell');
       this.log(`${SPELLS[name].name} is ready for this turn.`, 'spell');
       return true;
     }
@@ -833,6 +860,7 @@
       if (o.type === 'enemy') s.stats.kills++; // no body: nothing left to loot
       this.updateVision(); // a burned door can open a line of sight
       const what = o.type === 'lock' ? `the ${o.color} door` : o.type === 'web' ? 'a web' : 'an enemy';
+      this.emit('fireball');
       this.log(`Fireball! You incinerate ${what}.`, 'spell');
       return true;
     }
@@ -877,6 +905,7 @@
       const s = this.s, p = s.player, it = s.shop.items[i];
       const cost = this.price(it.id);
       p.coins -= cost;
+      this.emit('buy');
       switch (it.id) {
         case 'heal': p.hp = p.maxHp; this.log(`Healed to full for ${cost} coins.`, 'shop'); break;
         case 'str': p.str++; this.log(`Strength increased to ${p.str}.`, 'shop'); break;
@@ -908,6 +937,7 @@
       p.coins += delta;
       if (delta > 0) s.stats.coins += delta;
       s.shop.lastGamble = { roll, wager, delta, text };
+      this.emit(delta > 0 ? 'gambleWin' : delta < 0 ? 'gambleLose' : 'roll');
       this.log(`Gamble ${wager}: rolled ${roll}. ${text}`, 'shop');
       return s.shop.lastGamble;
     }

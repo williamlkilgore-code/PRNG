@@ -646,6 +646,31 @@ test('lock picks and dexterity', () => {
   ok(Game.fromSave(cp).error, 'bad dex rejected');
 });
 
+test('sound events', () => {
+  const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
+  const g = sandbox(map, [{ type: 'coin', x: 2, y: 1 }, { type: 'enemy', x: 4, y: 1, hp: 1, maxHp: 1 }, { type: 'web', x: 6, y: 1 }]);
+  g.drainEvents();
+  forceRoll(g, 3, 3);
+  g.choose('E'); run(g);
+  const ev = g.drainEvents();
+  ['roll', 'step', 'coin', 'hurt', 'kill', 'web'].forEach((e) => ok(ev.includes(e), 'missing event ' + e + ': ' + ev.join()));
+  ok(g.drainEvents().length === 0, 'drainEvents empties the list');
+  ok(!JSON.stringify(g.s).includes('"events"') && !('events' in g.checkpointFor(2)), 'events never saved');
+  // Sling, stairs, lock picks.
+  const h = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 2, maxHp: 2 }]);
+  forceRoll(h, 3, 3); h.drainEvents();
+  h.shoot('E');
+  ok(h.drainEvents().join() === 'shoot,hit', 'shot events');
+  forceRoll(h, 1, 1); h.s.player.y = 3; h.s.player.x = 7; h.drainEvents();
+  h.choose('E'); run(h);
+  ok(h.drainEvents().includes('stairs'), 'stairs event');
+  const k = sandbox(['#########', '#@..#...#', '#...D..>#', '#...#...#', '#########'], [{ type: 'lock', x: 4, y: 2, color: 'gold' }]);
+  k.s.player.x = 2; k.s.player.y = 2; k.s.player.lockpicks = 1;
+  forceRoll(k, 3, 3); k.choose('E'); run(k); k.drainEvents();
+  k.d = () => 1; k.pickLock();
+  ok(k.drainEvents().includes('pickFail'), 'pick fail event');
+});
+
 test('shop and gamble', () => {
   const g = Game.create('shoptest');
   while (g.s.floor < 4) { g.s.phase = 'levelDone'; g.nextFloor(); }

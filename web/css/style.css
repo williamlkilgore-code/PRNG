@@ -83,7 +83,13 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 }
 .ghost-btn:hover { background: var(--paper); }
 .ghost-btn svg { width: 18px; height: 18px; flex: none; }
-#themeBtn .label { display: none; }
+#themeBtn .label, #soundBtn .label { display: none; }
+#soundBtn .slash { display: none; }
+#soundBtn.muted-btn .slash { display: inline; }
+#soundBtn.muted-btn .waves { display: none; }
+.sound-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+.sound-row .check { margin: 0; min-width: 160px; color: var(--ink); }
+.sound-row input[type="range"] { flex: 1; min-width: 140px; accent-color: var(--accent); }
 .unread {
   background: var(--bad); color: #fff; border-radius: 10px; min-width: 20px; height: 20px;
   font-size: 13px; line-height: 20px; text-align: center; padding: 0 5px;
@@ -311,7 +317,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
   }
   .menu-items.open { display: flex; }
   .menu-items .ghost-btn { justify-content: flex-start; min-height: 44px; }
-  #themeBtn .label { display: inline; }
+  #themeBtn .label, #soundBtn .label { display: inline; }
 }
 
 /* Phone portrait: map fills the screen, controls docked at the bottom. */
