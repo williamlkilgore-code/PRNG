@@ -326,7 +326,7 @@
       if (!this.canLightTorch()) return false;
       this.s.player.torches--;
       this.s.level.torchLit = true;
-      this.log('You light a torch. It will burn until you leave this floor.', 'spell');
+      this.log('You light a torch. It will burn until you leave this floor.', 'status');
       this.updateVision();
       return true;
     }
@@ -544,7 +544,7 @@
           case 'web':
             this.clearObj(o);
             p.webbed = true;
-            this.endTurn('Caught in a spider web! Movement stops, and your next move is halved.', 'warn');
+            this.endTurn('Caught in a spider web! Movement stops, and your next move is halved.', 'status');
             return { type: 'web' };
           case 'portal': {
             const pair = L.objects[o.pair];

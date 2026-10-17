@@ -507,7 +507,13 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
 - **Journal.**
   - The log is never shown in the main page. `showJournal()` opens it in a modal and marks entries read.
   - Every entry has an increasing `seq` (`state.logSeq`).
-  - `renderJournal()` shows the unread count on the button. It also shows the newest entry of an important kind (`TOAST_KINDS`) as a toast for about 2.6 s.
+  - `renderJournal()` shows the unread count on the button. It also shows the newest entry of a toast kind (`TOAST_KINDS`) as a toast for about 2.6 s. The toast kinds are:
+    - `status`: being caught in a web, or lighting a carried torch;
+    - `good`: item pickups, keys, opened doors and the found torch;
+    - `fight`: combat;
+    - `bad`: death.
+
+    Blocked moves (`warn`), spells, floor notes and shop messages stay in the journal only.
 - **Roll and Pass.**
   - `#padCenter` is the middle of the direction pad. Its `data-mode` is one of:
     - `roll` in the roll phase;

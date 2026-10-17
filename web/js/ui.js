@@ -21,8 +21,10 @@
 
   let game = null;
   const ui = { busy: false, targeting: false, preview: null, boardKey: null, rolled: false, journalSeen: 0, toastSeq: 0 };
-  // Journal entries of these kinds also pop up briefly over the map.
-  const TOAST_KINDS = new Set(['good', 'bad', 'fight', 'warn', 'spell', 'floor', 'shop']);
+  // Journal entries of these kinds also pop up briefly over the map: status
+  // changes (webs, torches), item pickups and combat. Everything else
+  // (blocked moves, spells, floor notes) stays in the journal only.
+  const TOAST_KINDS = new Set(['status', 'good', 'fight', 'bad']);
   const DIE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="5" width="22" height="22" rx="5" style="fill:#fff;stroke:currentColor" stroke-width="2.4"/><circle cx="11" cy="11" r="2.3" style="fill:#2b2a33"/><circle cx="16" cy="16" r="2.3" style="fill:#2b2a33"/><circle cx="21" cy="21" r="2.3" style="fill:#2b2a33"/></svg>';
 
   const store = {

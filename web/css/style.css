@@ -113,7 +113,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .toast[hidden] { display: none; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }
 .toast.log-good { color: var(--good); } .toast.log-bad, .toast.log-fight { color: var(--bad); }
-.toast.log-warn { color: var(--warn); } .toast.log-spell { color: var(--spell); }
+.toast.log-warn, .toast.log-status { color: var(--warn); } .toast.log-spell { color: var(--spell); }
 
 .controls {
   display: flex; flex-direction: column; gap: 12px; min-width: 0; align-self: start;
@@ -177,7 +177,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .log { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; font-size: 17px; }
 .log li { padding: 4px 0; border-bottom: 1px dashed var(--line); }
 .log .log-good { color: var(--good); } .log .log-bad, .log .log-fight { color: var(--bad); }
-.log .log-warn { color: var(--warn); } .log .log-spell { color: var(--spell); }
+.log .log-warn, .log .log-status { color: var(--warn); } .log .log-spell { color: var(--spell); }
 .log .log-floor, .log .log-shop { font-weight: bold; }
 
 /* ------------------------------------------------------------ board svg */
