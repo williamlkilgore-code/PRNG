@@ -78,6 +78,18 @@ The start square is drawn as a **smiley face**. The exit is a **staircase**. Ste
 
 Every room's interior is at least **3×3**. Rooms are joined by one-square doorways in a shared wall that is one square thick.
 
+**Tutorial floors.** Floors 1–3 are hand-shaped (`tutorialLevel` in `levelgen.js`). Positions still come from the seed.
+
+| Floor | Map | Rooms | Contents |
+|---|---|---|---|
+| 1 | 7×7 | One 5×5 room | The start in a random corner and the stairs in the opposite corner. 2–3 coins. Nothing else. |
+| 2 | 13×7 | Two 5×5 rooms, joined by one doorway | The start in one room and the stairs in the other. 1–2 webs, always in the stairs room. 3 coins, 1 heart. |
+| 3 | 13×11 | A 2×2 grid of 5×4 rooms, chained start → A → B → stairs (random corner and direction) | The door into the stairs room is locked, and its key is in A. 1 enemy and 1 web, in A and B (either way round). 1 chest, 1 heart, 1 med pack, 3–4 coins. No portals. |
+
+Floor 4 onward uses the normal generator.
+
+**Skipping the tutorial.** `Game.create(seed, { startFloor: 4 })`, from the "Skip tutorial" checkbox on the New game screen, starts on floor 4 with the starting stats.
+
 ### 2.4 Squares and objects
 
 All values use the floor number `f`.
@@ -162,6 +174,8 @@ All values use the floor number `f`.
 Armed spells cost a charge only if they take effect. An armed but unused spell is disarmed at the end of the turn and keeps its charge.
 
 ### 2.8 Floor content and size
+
+This section covers floors 4 and up. Floors 1–3 are the tutorial layouts in 2.3.
 
 Floor `f` is `w × h` squares, including the outer wall:
 
@@ -504,6 +518,17 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
     - **Phone portrait** (≤ 860 px wide): the map fills the screen and the controls dock at the bottom.
     - **Phone landscape** (≤ 560 px tall): the map on the left and a slim control column on the right.
   - On narrow or short screens, the brand and turn counter are hidden, and the menu buttons fold into a ☰ dropdown (`#menuToggle`, `#menuItems`).
+- **Hints.**
+  - One-time tips (`HINTS` in `ui.js`) are shown with `openModal`. Each has a "Don't show hints" checkbox.
+  - `checkHints()` runs at the end of every `render()`, once `startWith()` has set `ui.hintsReady`. It queues hints as follows:
+    - **On entering a floor:** `start`; `doorway` (if there's more than one room); and `web`, `enemy`, `lock`, `items`, `portal` and `dark` when the floor has those things.
+    - **In the choose phase:** `even` or `odd`.
+    - **When blocked:** `blocked`.
+    - **When holding a spell:** `spells`.
+  - `showNextHint()` shows one at a time, only while no modal is open and nothing is moving. `closeModal()` triggers the next.
+  - `localStorage` key `dicedelve-hints-v1` holds `{off, seen}`.
+  - The Rules screen has a button to turn hints on or off. Turning them on resets which hints count as seen.
+  - **To add a hint:** add an entry to `HINTS`, then a `queueHint(id)` call in `checkHints()`.
 - **Journal.**
   - The log is never shown in the main page. `showJournal()` opens it in a modal and marks entries read.
   - Every entry has an increasing `seq` (`state.logSeq`).
@@ -558,6 +583,7 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
 - **Level invariants** for floors 1–80 on 6 seeds: room size ≥ 3×3, closed border, object placement, lock walls on opposite sides, one key per lock, keys reachable with all locks closed, full connectivity, stairs reachable, portal pairing and lock zones, obstacles present.
 - **Determinism:** the same seed gives the same level.
 - **Scripted scenarios** on small hand-made maps (`sandbox([...rows])`, where `#` is wall, `D` is doorway, `@` is start and `>` is stairs). They cover parity, sliding, redirect and no doubling back, webs, combat, keys and locks, portals, every spell, and the shop and gamble payouts.
+- **Tutorial floors:** floor 1 is one 5×5 room with the stairs in the opposite corner and no obstacles. Floor 2 is two rooms with webs, none in the start room. Floor 3 is four chained rooms with a lock guarding the stairs (key reachable), plus an enemy, a web and every item, and no portal. Floor 4 uses the normal generator. `startFloor: 4` skips the tutorial.
 - **Dark floors:** the selection rules (never floors 1–5, shops or two in a row, and a sensible frequency); one torch reachable without keys outside the start room, plus one dark chest; vision radius; walls blocking light; memory; stairs staying marked; preview and fireball limited to what you can see; carried, found and shop torches; the torch resetting each floor; torches in checkpoints.
 - **Saves:** a checkpoint round-trips; a reloaded floor replays identically with the same choices; stats carry over; shop checkpoints open the shop; older saves convert; tampered checkpoints are rejected.
 - **Random play:** 25 simulated games choosing random legal moves (with huge health) for 30 floors or 4,000 actions. It checks that the player never ends up inside a wall, that the game never loops forever, and that the phases are always valid.

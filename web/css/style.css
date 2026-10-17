@@ -275,6 +275,12 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .notice { border: 2px dashed var(--good); border-radius: 8px; padding: 6px 10px; color: var(--good); }
 .notice.bad { border-color: var(--bad); color: var(--bad); }
 
+.hint { display: flex; gap: 14px; align-items: flex-start; }
+.hint .hint-icon { width: 56px; height: 56px; flex: none; color: var(--spell); }
+.hint h2 { font-size: 26px; }
+.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; cursor: pointer; color: var(--muted); }
+.check input { width: 20px; height: 20px; accent-color: var(--accent); }
+
 /* ---------------------------------------------------------------- mobile */
 /* Narrow or short screens: compact header with a menu button. */
 @media (max-width: 860px), (max-height: 560px) {

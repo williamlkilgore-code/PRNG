@@ -90,9 +90,44 @@ test('level generation invariants (floors 1-80, 6 seeds)', () => {
         const z = reach(L, p.x, p.y, blocked);
         ok(z.seen[q.y * L.w + q.x] === 1, `portal crosses a locked door ${tag}`);
       }
-      ok(L.objects.some((o) => o.type === 'enemy') && L.objects.some((o) => o.type === 'web'), `missing obstacles ${tag}`);
+      if (floor >= 2) ok(L.objects.some((o) => o.type === 'web'), `missing webs ${tag}`);
+      if (floor >= 3) ok(L.objects.some((o) => o.type === 'enemy'), `missing enemies ${tag}`);
     }
   }
+});
+
+test('tutorial floors', () => {
+  const count = (L, t) => L.objects.filter((o) => o.type === t).length;
+  const roomAt = (L, x, y) => L.rooms.findIndex((r) => x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1);
+  for (const seed of SEEDS) {
+    const f1 = generateLevel(seed, 1);
+    ok(f1.w === 7 && f1.h === 7 && f1.rooms.length === 1, 'floor 1 is one 5x5 room');
+    ok(Math.abs(f1.start.x - f1.stairs.x) === 4 && Math.abs(f1.start.y - f1.stairs.y) === 4, 'floor 1 stairs in opposite corner');
+    ok(count(f1, 'coin') >= 2 && !count(f1, 'web') && !count(f1, 'enemy') && !count(f1, 'lock'), 'floor 1 contents');
+
+    const f2 = generateLevel(seed, 2);
+    ok(f2.rooms.length === 2 && f2.doorways.length === 1, 'floor 2 is two rooms and a doorway');
+    ok(count(f2, 'web') >= 1 && !count(f2, 'enemy') && !count(f2, 'lock'), 'floor 2 contents');
+    const sr = roomAt(f2, f2.start.x, f2.start.y);
+    ok(roomAt(f2, f2.stairs.x, f2.stairs.y) !== sr, 'floor 2 stairs in the other room');
+    ok(f2.objects.filter((o) => o.type === 'web').every((o) => roomAt(f2, o.x, o.y) !== sr), 'floor 2 web in start room');
+
+    const f3 = generateLevel(seed, 3);
+    ok(f3.rooms.length === 4 && f3.doorways.length === 3, 'floor 3 is four rooms in a chain');
+    ok(count(f3, 'lock') === 1 && count(f3, 'key') === 1 && count(f3, 'enemy') === 1 && count(f3, 'web') === 1 &&
+      count(f3, 'chest') === 1 && count(f3, 'heart') === 1 && count(f3, 'medpack') === 1 && !count(f3, 'portal'), 'floor 3 contents');
+    const s3 = roomAt(f3, f3.start.x, f3.start.y);
+    ok(f3.objects.filter((o) => o.type === 'web' || o.type === 'enemy').every((o) => roomAt(f3, o.x, o.y) !== s3), 'floor 3 obstacle in start room');
+    const lock = f3.objects.find((o) => o.type === 'lock');
+    const z = reach(f3, f3.start.x, f3.start.y, new Set([lock.y * f3.w + lock.x]));
+    ok(!z.seen[f3.stairs.y * f3.w + f3.stairs.x], 'floor 3 lock guards the stairs');
+
+    const f4 = generateLevel(seed, 4);
+    ok(f4.w >= 17 && f4.h >= 13 && f4.rooms.length > 4, 'floor 4 uses the normal generator');
+  }
+  const skip = Game.create('skipper', { startFloor: 4 });
+  ok(skip.s.floor === 4 && skip.s.level && skip.s.checkpoint.floor === 4, 'skip tutorial starts on floor 4');
+  ok(Game.create('normal').s.floor === 1, 'default start on floor 1');
 });
 
 test('determinism', () => {

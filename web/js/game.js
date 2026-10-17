@@ -64,11 +64,14 @@
       };
     }
 
-    static create(seedText) {
+    // opts.startFloor (e.g. 4) skips the tutorial floors.
+    static create(seedText, opts) {
       seedText = String(seedText || '').trim() || randomSeedText();
       const g = new Game(Game.newState(seedText));
       g.log(`A new descent begins. Seed "${seedText}".`);
-      g.enterFloor(1);
+      const start = opts && Number.isInteger(opts.startFloor) && opts.startFloor > 1 ? opts.startFloor : 1;
+      if (start > 1) g.log('Skipped the tutorial.');
+      g.enterFloor(start);
       return g;
     }
 
@@ -338,7 +341,7 @@
       s.phase = 'levelDone';
       s.summary = { floor: s.floor, turns: s.turn - s.floorStartTurn, next: s.floor + 1, nextIsShop: R.isShopFloor(s.seed, s.floor + 1) };
       s.checkpoint = this.checkpointFor(s.floor + 1);
-      this.log(`You descend the stairs of floor ${s.floor}!`, 'good');
+      this.log(`You descend the stairs of floor ${s.floor}!`, 'floor');
     }
 
     nextFloor() {

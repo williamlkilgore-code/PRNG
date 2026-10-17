@@ -245,8 +245,89 @@
     return L;
   }
 
+  /* Tutorial floors 1-3: small hand-shaped layouts that introduce one idea
+   * at a time. Positions still come from the seeded rng.
+   *   1: one 5x5 room, coins only.
+   *   2: two 5x5 rooms and a doorway; webs.
+   *   3: a 2x2 grid of rooms chained start -> A -> B -> stairs, with the last
+   *      door locked (key in A), an enemy, a web, a chest, a heart, a med pack. */
+  function tutorialLevel(rng, floor) {
+    const R = DC.rules;
+    let w, h, rooms;
+    if (floor === 1) { w = 7; h = 7; rooms = [{ x0: 0, y0: 0, x1: 6, y1: 6 }]; }
+    else if (floor === 2) { w = 13; h = 7; rooms = [{ x0: 0, y0: 0, x1: 6, y1: 6 }, { x0: 6, y0: 0, x1: 12, y1: 6 }]; }
+    else {
+      w = 13; h = 11;
+      // Ring order around the 2x2 grid: TL, TR, BR, BL.
+      rooms = [{ x0: 0, y0: 0, x1: 6, y1: 5 }, { x0: 6, y0: 0, x1: 12, y1: 5 },
+        { x0: 6, y0: 5, x1: 12, y1: 10 }, { x0: 0, y0: 5, x1: 6, y1: 10 }];
+    }
+    const tiles = new Array(w * h).fill(0);
+    const roomOf = new Array(w * h).fill(-1);
+    rooms.forEach((r, id) => {
+      for (let y = r.y0 + 1; y < r.y1; y++)
+        for (let x = r.x0 + 1; x < r.x1; x++) { tiles[y * w + x] = 1; roomOf[y * w + x] = id; }
+    });
+    const L = { w, h, tiles, rooms, doorways: [], objects: [], trail: [], floor, dark: false };
+    const used = new Set();
+    const cellsOf = (id) => tiles.map((t, i) => i).filter((i) => roomOf[i] === id);
+    const take = (pool) => {
+      const avail = pool.filter((c) => !used.has(c));
+      if (!avail.length) return null;
+      const c = rng.pick(avail);
+      used.add(c);
+      return { x: c % w, y: (c / w) | 0 };
+    };
+    const door = (a, b) => {
+      const e = roomEdges(rooms).find((e) => (e.a === a && e.b === b) || (e.a === b && e.b === a));
+      const [x, y] = rng.pick(e.cells);
+      tiles[y * w + x] = 2;
+      L.doorways.push({ x, y });
+      used.add(y * w + x);
+      return { x, y };
+    };
+    const put = (type, n, pool, extra) => {
+      for (let k = 0; k < n; k++) { const c = take(pool); if (c) L.objects.push(Object.assign({ type }, c, extra)); }
+    };
+    const all = () => tiles.map((t, i) => i).filter((i) => tiles[i] === 1);
+
+    if (floor === 1) {
+      const corners = [[1, 1], [5, 1], [5, 5], [1, 5]];
+      const k = rng.int(0, 3);
+      const [sx, sy] = corners[k], [ex, ey] = corners[(k + 2) % 4];
+      L.start = { x: sx, y: sy }; L.stairs = { x: ex, y: ey };
+      used.add(sy * w + sx); used.add(ey * w + ex);
+      put('coin', rng.int(2, 3), all());
+    } else if (floor === 2) {
+      door(0, 1);
+      const sr = rng.int(0, 1), er = 1 - sr;
+      L.start = take(cellsOf(sr)); L.stairs = take(cellsOf(er));
+      put('web', rng.int(1, 2), cellsOf(er));
+      put('coin', 3, all());
+      put('heart', 1, all());
+    } else {
+      const k = rng.int(0, 3), dir = rng.chance(0.5) ? 1 : 3;
+      const [p0, p1, p2, p3] = [0, 1, 2, 3].map((i) => (k + dir * i) % 4);
+      door(p0, p1); door(p1, p2);
+      const lock = door(p2, p3);
+      L.start = take(cellsOf(p0)); L.stairs = take(cellsOf(p3));
+      L.objects.push({ type: 'lock', x: lock.x, y: lock.y, color: KEY_COLORS[0] });
+      put('key', 1, cellsOf(p1), { color: KEY_COLORS[0] });
+      const hp = R.enemyHealth(floor);
+      const [er, wr] = rng.chance(0.5) ? [p1, p2] : [p2, p1];
+      put('enemy', 1, cellsOf(er), { hp, maxHp: hp });
+      put('web', 1, cellsOf(wr));
+      put('chest', 1, all());
+      put('heart', 1, all());
+      put('medpack', 1, all());
+      put('coin', rng.int(3, 4), all());
+    }
+    return L;
+  }
+
   function generateLevel(seed, floor) {
     const rng = new RNG(seedFor(seed, 'floor', floor));
+    if (floor <= 3) return tutorialLevel(rng, floor);
     // Floors grow from 17x13 up to a cap of 21x15 (fits phone screens).
     const w = 17 + 2 * Math.min(2, Math.floor((floor - 1) / 3));
     const h = 13 + 2 * Math.min(1, Math.floor((floor - 1) / 4));

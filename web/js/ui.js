@@ -9,6 +9,7 @@
   const MAX_SLOTS = 12;
   const BEST_KEY = 'dicedelve-best-v1';
   const THEME_KEY = 'dicedelve-theme';
+  const HINTS_KEY = 'dicedelve-hints-v1';
   const PAD_ORDER = ['NW', 'N', 'NE', 'W', null, 'E', 'SW', 'S', 'SE'];
   const ANGLE = { E: 0, SE: 45, S: 90, SW: 135, W: 180, NW: 225, N: 270, NE: 315 };
   const SPELL_ORDER = ['reroll', 'luck', 'noclip', 'invis', 'fireball'];
@@ -53,6 +54,75 @@
     renderHud();
     renderBoard();
     renderPanel();
+    checkHints();
+  }
+
+  // ------------------------------------------------------------------- hints
+  /* One-time tips shown as pop-ups the first time something comes up.
+   * Seen hints and the on/off switch live in localStorage. */
+  const HINTS = {
+    start: { icon: 'i-start', title: 'Welcome to the dungeon', text: 'Tap <b>Roll</b> in the middle of the direction pad. The two dice add up to how many squares you move. Reach the <b>staircase</b> to finish the floor.' },
+    even: { icon: 'i-sp-reroll', title: 'Even roll: move straight', text: 'An even total moves you up, down, left or right. Tap the map in the direction you want to go (or use the pad). You keep sliding until your moves run out.' },
+    odd: { icon: 'i-sp-reroll', title: 'Odd roll: move diagonally', text: 'An odd total moves you diagonally. Tap the map toward the corner you want. You keep sliding until your moves run out.' },
+    blocked: { icon: 'i-stairs', title: 'Blocked!', text: "You hit something with moves left. Pick a new direction to keep going. You can't step back onto squares you walked this turn, unless that's the only way." },
+    doorway: { icon: 'i-door-open', title: 'Doorways', text: 'Rooms are joined by gaps in the wall. Slide through a doorway to reach the next room.' },
+    web: { icon: 'i-web', title: 'Spider webs', text: 'Running into a web stops you on the spot, and your <b>next</b> move is halved. Steer around them when you can.' },
+    enemy: { icon: 'i-enemy', title: 'Enemies', text: "When you run into an enemy it hits you, and you hit back with your strength. Kill it and you keep moving; if it survives, your move ends. The red number is its health." },
+    lock: { icon: 'i-lock', title: 'Locked doors', text: 'A locked door needs the key of the same color. You can always reach the key without opening any door. Walk into the door with the key to open it.' },
+    items: { icon: 'i-chest', title: 'Treasure', text: 'Coins buy things in shops (floor 5 is the first). Chests hold extra coins. Hearts and med packs heal you.' },
+    portal: { icon: 'i-portal', title: 'Portals', text: 'Step into a portal and you come out of its matching twin, still moving in the same direction.' },
+    dark: { icon: 'i-moon', title: 'A dark floor', text: "You can only see the squares next to you. Every dark floor has a torch you can reach without keys. Pick it up to see 4 squares around you. There's also a dark chest with a free spell." },
+    spells: { icon: 'i-sp-fireball', title: 'You have a spell', text: 'Spells sit in the bar under the direction pad. Tap one to use it. Hover or long-press to read what it does, or open <b>Rules</b>.' },
+  };
+  const hintState = (() => {
+    try { const v = JSON.parse(store.get(HINTS_KEY) || '{}'); return { off: !!v.off, seen: v.seen && typeof v.seen === 'object' ? v.seen : {} }; }
+    catch (e) { return { off: false, seen: {} }; }
+  })();
+  const saveHints = () => store.set(HINTS_KEY, JSON.stringify(hintState));
+  ui.hintQueue = [];
+  function queueHint(id) {
+    if (hintState.off || hintState.seen[id] || ui.hintQueue.includes(id)) return;
+    ui.hintQueue.push(id);
+  }
+  function checkHints() {
+    if (!ui.hintsReady || hintState.off) return;
+    const s = game.s, L = s.level;
+    const key = `${s.seed}:${s.floor}`;
+    if (L && ui.hintFloor !== key) {
+      ui.hintFloor = key;
+      const has = (t) => L.objects.some((o) => o.type === t);
+      queueHint('start');
+      if (L.rooms.length > 1) queueHint('doorway');
+      if (has('web')) queueHint('web');
+      if (has('enemy')) queueHint('enemy');
+      if (has('lock')) queueHint('lock');
+      if (has('chest') || has('heart') || has('medpack')) queueHint('items');
+      if (has('portal')) queueHint('portal');
+      if (L.dark) queueHint('dark');
+    }
+    if (s.phase === 'choose' && s.dice) queueHint(s.parity === 'ortho' ? 'even' : 'odd');
+    if (s.phase === 'redirect') queueHint('blocked');
+    if (Object.values(s.player.spells).some((n) => n > 0)) queueHint('spells');
+    showNextHint();
+  }
+  function showNextHint() {
+    if (!ui.hintsReady || hintState.off || !ui.hintQueue.length || ui.busy || !$('#modal').hidden) return;
+    if (!['roll', 'choose', 'redirect'].includes(game.s.phase)) return;
+    const id = ui.hintQueue.shift();
+    const h = HINTS[id];
+    hintState.seen[id] = true;
+    saveHints();
+    openModal(`
+      <div class="hint">
+        ${RD.icon(h.icon, 'hint-icon', h.icon === 'i-lock' ? RD.COLORS.gold : h.icon === 'i-portal' ? RD.COLORS.violet : '')}
+        <div><h2>${h.title}</h2><p>${h.text}</p></div>
+      </div>
+      <label class="check"><input type="checkbox" id="hintsOff"> Don't show hints</label>
+      <div class="row"><button class="btn primary" type="button" id="hintOk">Got it</button></div>`);
+    $('#hintOk').addEventListener('click', () => {
+      if ($('#hintsOff').checked) { hintState.off = true; ui.hintQueue = []; saveHints(); }
+      closeModal();
+    });
   }
 
   function renderHud() {
@@ -380,7 +450,11 @@
     const first = $('#modalBody').querySelector('[autofocus], .btn.primary, button, input');
     if (first) first.focus();
   }
-  function closeModal() { $('#modal').hidden = true; }
+  function closeModal() {
+    $('#modal').hidden = true;
+    // Queued hints follow once any pop-up closes.
+    setTimeout(() => { if (game) showNextHint(); }, 0);
+  }
   document.addEventListener('click', (e) => {
     if (e.target.id === 'modal' && modalDismissable) closeModal();
     const c = e.target.closest('[data-close]');
@@ -399,6 +473,7 @@
       ${b ? `<p class="muted">Deepest floor reached: ${b}</p>` : ''}
       <h3>Seed</h3>
       <input type="text" id="seedInput" placeholder="Leave blank for a random dungeon" maxlength="40" autocomplete="off">
+      <label class="check"><input type="checkbox" id="skipTut"> Skip tutorial (start on floor 4)</label>
       <div class="row">
         ${saved && !fromMenu ? `<button class="btn primary" id="continueBtn" type="button">Continue (floor ${savedFloor})</button>` : ''}
         <button class="btn ${saved && !fromMenu ? '' : 'primary'}" id="newBtn" type="button">New game</button>
@@ -412,8 +487,9 @@
       if (r.game) { startWith(r.game); } else { store.del(SAVE_KEY); showStart(); }
     });
     $('#loadBtn').addEventListener('click', () => showSaves(() => showStart(fromMenu)));
-    $('#newBtn').addEventListener('click', () => startWith(Game.create($('#seedInput').value)));
-    $('#seedInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') startWith(Game.create(e.target.value)); });
+    const newGame = () => startWith(Game.create($('#seedInput').value, $('#skipTut').checked ? { startFloor: 4 } : undefined));
+    $('#newBtn').addEventListener('click', newGame);
+    $('#seedInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') newGame(); });
     $('#rulesBtn').addEventListener('click', () => showHelp(() => showStart(fromMenu)));
   }
 
@@ -422,6 +498,7 @@
     ui.boardKey = null; ui.targeting = false; ui.preview = null; ui.busy = false;
     ui.journalSeen = g.s.logSeq || 0;
     ui.toastSeq = (g.s.logSeq || 1) - 1;
+    ui.hintQueue = []; ui.hintFloor = null; ui.hintsReady = true;
     closeModal();
     render();
     save();
@@ -616,7 +693,18 @@
       <p class="muted">Tap Roll in the middle of the direction pad. Then tap anywhere on the map in the direction you want to go (the nearest allowed direction is used), or tap an arrow on the pad. The Journal button keeps a log of everything that happened. Keyboard: Space/Enter: roll · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too.</p>
       <h3>Saving</h3>
       <p>The game saves a checkpoint each time you reach a new floor. A checkpoint holds your seed, the floor, your stats, coins and spells. The floor itself is rebuilt from the seed, so loading always restarts that floor from its beginning (same layout, same dice). Progress inside a floor isn't saved. Use <b>Saves</b> for named save slots, a copyable save code, or a save file.</p>
-      <div class="row"><button class="btn primary" type="button" id="helpClose">Got it</button></div>`, !back);
+      <h3>Tutorial and hints</h3>
+      <p>Floors 1 to 3 are a short tutorial: one room, then two rooms with webs, then a small dungeon with every feature. You can skip it from the New game screen. Hint pop-ups explain each new thing the first time you meet it.</p>
+      <div class="row">
+        <button class="btn" type="button" id="hintsToggle">${hintState.off ? 'Turn hints on' : 'Turn hints off'}</button>
+        <button class="btn primary" type="button" id="helpClose">Got it</button>
+      </div>`, !back);
+    $('#hintsToggle').addEventListener('click', (e) => {
+      hintState.off = !hintState.off;
+      if (!hintState.off) { hintState.seen = {}; ui.hintFloor = null; } else ui.hintQueue = [];
+      saveHints();
+      e.target.textContent = hintState.off ? 'Turn hints on' : 'Turn hints off';
+    });
     $('#helpClose').addEventListener('click', () => (back ? back() : closeModal()));
   }
 
