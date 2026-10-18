@@ -124,6 +124,7 @@
     dark: { icon: 'i-moon', title: 'A dark floor', text: "You can only see the squares next to you. Every dark floor has a torch you can reach without keys. Pick it up to see 4 squares around you. There's also a dark chest with a free spell." },
     shoot: { icon: 'i-sling', title: 'Your sling', text: 'After rolling you can <b>shoot instead of moving</b>: tap the sling, then a direction. The stone flies as far as your roll in a straight or diagonal line (same as your move) and hits the first enemy for 1 damage. Enemies you kill leave bodies; walk over them to collect stones.' },
     stalker: { icon: 'i-stalker', title: 'Stalkers', text: 'These hooded enemies hunt you. After each of your turns, a stalker that can see you moves one square closer, and attacks if it is next to you. On dark floors they spot you only up close, unless your torch is lit, which they can see from anywhere.' },
+    mimic: { icon: 'i-mimic-open', title: 'Mimic!', text: "Deep in the dungeon, some chests and locked doors are monsters in disguise. When one wakes it bites first: d20 + DEX of 12 or more takes a normal bite, anything less doubles it. It has double an enemy's health and never moves. Kill it for twice a chest's coins plus a random spell. Look closely: a mimic shows tiny teeth at its seam." },
     lockpick: { icon: 'i-lockpick', title: 'Lock picks', text: "With a lock pick, walking into a locked door you don't have the key for lets you try the lock: d20 + DEX must reach the door's number (gold 12, crimson 14, azure 16, emerald 18). Buy DEX in the shop to get better at it." },
     spells: { icon: 'i-sp-fireball', title: 'You have a spell', text: 'Spells sit in the bar under the direction pad. Tap one to use it. Hover or long-press to read what it does, or open <b>Rules</b>.' },
   };
@@ -154,6 +155,7 @@
       if (L.dark) queueHint('dark');
       if (L.objects.some((o) => o.stalker && !o.done)) queueHint('stalker');
     }
+    if (L && L.objects.some((o) => o.type === 'enemy' && o.mimic && !o.done)) queueHint('mimic');
     if (s.phase === 'choose' && s.dice) queueHint(s.parity === 'ortho' ? 'even' : 'odd');
     if (s.phase === 'redirect') queueHint('blocked');
     if (Object.values(s.player.spells).some((n) => n > 0)) queueHint('spells');
@@ -820,6 +822,7 @@
         ${legend('i-sling', `Sling: after rolling, shoot instead of moving. The stone travels up to your roll in the roll's direction type and hits the first enemy for 1 damage, then your turn ends. You start with ${R.START_AMMO} stones.`)}
         ${legend('i-body', 'Body: enemies killed in melee or by the sling leave one. Walk over it to collect 1–2 sling stones. Fireball leaves nothing.')}
         ${legend('i-stalker', `Stalker (floor ${R.STALKER_FROM}+): after each turn, if it can see you it moves one square closer, attacking when adjacent. On dark floors it sees you only within 2 squares, or from anywhere while your torch is lit.`)}
+        ${legend('i-mimic-open', `Mimic (floor ${R.MIMIC_FROM}+): some chests and locked doors are monsters. Touch one and it ambushes you: d20 + DEX ≥ ${R.MIMIC_DODGE} takes normal damage, otherwise double, and your move stops. It has twice an enemy's health and never moves. Killing it gives twice a chest's coins plus a random spell.`)}
         ${legend('i-lockpick', 'Lock pick: walk into a locked door without its key and you can try the lock: d20 + DEX vs. gold 12, crimson 14, azure 16, emerald 18. Used up either way; failure stops your move. DEX +1 is always for sale in the shop.')}
       </div>
       <h3>Shops</h3>

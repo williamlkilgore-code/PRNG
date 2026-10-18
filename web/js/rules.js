@@ -71,5 +71,12 @@
   rules.STALKER_FROM = 12;
   rules.stalkerCount = (f) => (f < rules.STALKER_FROM ? 0 : Math.min(3, 1 + Math.floor((f - rules.STALKER_FROM) / 8)));
 
+  // Mimics: from floor 19, a 30% chance per floor of one mimic (a chest or a
+  // fake locked door). Its ambush bites for double damage unless d20 + DEX
+  // reaches MIMIC_DODGE.
+  rules.MIMIC_FROM = 19;
+  rules.MIMIC_CHANCE = 0.3;
+  rules.MIMIC_DODGE = 12;
+
   DC.rules = rules;
 })(typeof window !== 'undefined' ? window : globalThis);

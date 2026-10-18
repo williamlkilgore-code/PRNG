@@ -110,6 +110,9 @@
       tone({ type: 'square', freq: 470, to: 140, dur: 0.32, vol: 0.05, lp: 900, at: 0.03 }); },
     hit() { noise({ freq: 1100, q: 0.8, dur: 0.1, vol: 0.55 }); tone({ type: 'square', freq: 230, to: 110, dur: 0.12, vol: 0.14, lp: 1600 }); },
     kill() { SFX.hit(); notes([440, 220], 0.1, { type: 'square', dur: 0.14, vol: 0.12, lp: 2000, at: 0.06 }); },
+    mimic() { noise({ filter: 'highpass', freq: 1800, dur: 0.05, vol: 0.6 });
+      tone({ type: 'sawtooth', freq: 240, to: 60, dur: 0.3, vol: 0.22, lp: 900, at: 0.03 });
+      [0.12, 0.2, 0.27].forEach((at) => noise({ at, freq: 600, q: 1.2, dur: 0.05, vol: 0.4 })); },
     hurt() { tone({ type: 'sawtooth', freq: 150, to: 85, dur: 0.26, vol: 0.2, lp: 700 }); },
     coin() { tone({ type: 'triangle', freq: 988, dur: 0.08, vol: 0.22 }); tone({ type: 'triangle', freq: 1319, dur: 0.22, vol: 0.22, at: 0.07 }); },
     chest() { notes([523, 659, 784, 1047], 0.065, { type: 'triangle', dur: 0.22, vol: 0.18 }); },

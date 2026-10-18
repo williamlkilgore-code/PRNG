@@ -491,6 +491,11 @@
 
       m.stepsLeft -= 1;
       const o = this.obj(lm.x, lm.y);
+      // A chest that is really a mimic: it ambushes you (Invisibility slips past
+      // unnoticed, and it stays hidden).
+      if (o && o.type === 'mimic' && !s.armed.invis) return this.ambushMimic(o);
+      // A fake locked door: touching it with a key wakes it (the key is kept).
+      if (o && o.type === 'lock' && o.mimic) return this.ambushMimic(o);
       if (o && o.type === 'enemy') {
         if (s.armed.invis) {
           s.invisUsed = true;
@@ -632,10 +637,48 @@
       const L = this.s.level;
       this.clearObj(o);
       this.s.stats.kills++;
+      if (o.mimic) this.mimicReward(o);
       if (!dropBody) return;
       const body = { type: 'body', x: o.x, y: o.y, ammo: this.d(2) };
       L.objects.push(body);
       this.objAt[o.y * L.w + o.x] = L.objects.length - 1;
+    }
+
+    // ----------------------------------------------------------------- mimics
+    /* A mimic (chest or fake door) wakes up: d20 + DEX against MIMIC_DODGE
+     * decides whether its bite does normal or double damage. It then becomes
+     * a 2x-health enemy on the same square, and your move stops. */
+    ambushMimic(o) {
+      const s = this.s, p = s.player, f = s.floor;
+      const kind = o.type === 'mimic' ? 'chest' : 'door';
+      const roll = this.d(20), total = roll + p.dex, dodged = total >= R.MIMIC_DODGE;
+      const dmg = R.enemyDamage(f) * (dodged ? 1 : 2);
+      const hp = 2 * R.enemyHealth(f);
+      p.hp = Math.max(0, p.hp - dmg);
+      Object.assign(o, { type: 'enemy', mimic: kind, hp, maxHp: hp });
+      s.pickTarget = -1;
+      this.emit('mimic');
+      this.emit('hurt');
+      this.log(`It's a mimic! The ${kind === 'chest' ? 'chest' : o.color + ' door'} lunges at you. ` +
+        `DEX ${roll} + ${p.dex} = ${total} (needed ${R.MIMIC_DODGE}): ${dodged ? 'you twist away' : 'it bites deep'}, ${dmg} damage.`, 'fight');
+      if (p.hp <= 0) { this.die(); return { type: 'dead' }; }
+      this.updateVision();
+      this.endTurn();
+      return { type: 'fight', mimic: kind };
+    }
+
+    // Killing a mimic: twice a chest's coins plus a random spell.
+    mimicReward(o) {
+      const s = this.s, f = s.floor;
+      const rolls = [];
+      for (let i = 0; i < R.bonusDice(f); i++) rolls.push(this.d(6));
+      const v = 2 * (R.coinValue(f) + rolls.reduce((a, b) => a + b, 0));
+      const kinds = Object.keys(SPELLS);
+      const spell = kinds[this.d(kinds.length) - 1];
+      this.gainCoins(v);
+      s.player.spells[spell]++;
+      this.emit('chest');
+      this.log(`The mimic's hoard: ${v} coins and a ${SPELLS[spell].name} spell!`, 'good');
     }
 
     // ------------------------------------------------------------------ sling
@@ -745,6 +788,8 @@
     pickLock() {
       const s = this.s, p = s.player, door = this.pickDoor();
       if (!door) return null;
+      // A fake door wakes as soon as the pick touches it (the pick survives).
+      if (door.mimic) return Object.assign({ ok: false, mimic: true }, this.ambushMimic(door));
       const roll = this.d(20), total = roll + p.dex, target = R.LOCK_TARGET[door.color];
       p.lockpicks--;
       s.pickTarget = -1;
@@ -848,7 +893,8 @@
       this.clearObj(o);
       o.burned = true;
       s.player.spells.fireball--;
-      if (o.type === 'enemy') s.stats.kills++; // no body: nothing left to loot
+      if (o.type === 'enemy' || o.mimic) s.stats.kills++; // no body: nothing left to loot
+      if (o.mimic) this.mimicReward(o);
       this.updateVision(); // a burned door can open a line of sight
       const what = o.type === 'lock' ? `the ${o.color} door` : o.type === 'web' ? 'a web' : 'an enemy';
       this.emit('fireball');

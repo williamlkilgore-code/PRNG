@@ -251,6 +251,33 @@
     const enemies = L.objects.filter((o) => o.type === 'enemy');
     rng.shuffle(enemies.slice()).slice(0, R.stalkerCount(floor)).forEach((o) => { o.stalker = true; });
 
+    // Mimics (floor 19+): at most one per floor, either a chest that bites or a
+    // fake locked door in an ordinary doorway. A door mimic is only placed
+    // where blocking it cuts nothing off, so it is never on the only route.
+    if (floor >= R.MIMIC_FROM && rng.chance(R.MIMIC_CHANCE)) {
+      const chests = L.objects.filter((o) => o.type === 'chest');
+      const floorCells = tiles.filter((t) => t !== 0).length;
+      const mustReach = L.objects.filter((o) => o.type === 'key' || o.type === 'torch');
+      const doors = L.doorways.filter((d) => {
+        const i = d.y * w + d.x;
+        if (used.has(i)) return false;
+        if (reach(L, sx, sy, new Set([i])).size !== floorCells - 1) return false;
+        const z = reach(L, sx, sy, new Set([...locked, i]));
+        return mustReach.every((o) => z.seen[o.y * w + o.x]);
+      });
+      const kinds = [chests.length && 'chest', doors.length && 'door'].filter(Boolean);
+      if (kinds.length) {
+        if (rng.pick(kinds) === 'chest') {
+          rng.pick(chests).type = 'mimic';
+        } else {
+          const d = rng.pick(doors);
+          used.add(d.y * w + d.x);
+          const colors = lockList.length ? lockList.map((_, k) => KEY_COLORS[k]) : KEY_COLORS.slice(0, 2);
+          L.objects.push({ type: 'lock', x: d.x, y: d.y, color: rng.pick(colors), mimic: true });
+        }
+      }
+    }
+
     return L;
   }
 

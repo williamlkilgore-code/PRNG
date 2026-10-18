@@ -53,6 +53,25 @@
     <path d="M18.6 15.2a4.2 4.2 0 1 0 1.6 6.6A3.4 3.4 0 0 1 18.6 15.2Z" style="fill:#ffe58a;stroke:var(--ink)" stroke-width="1"/>
   </symbol>
 
+  <symbol id="i-mimic" viewBox="0 0 32 32">
+    <path d="M5 14Q5 7 16 7Q27 7 27 14Z" style="fill:#b7712f;${ink}" stroke-width="1.8"/>
+    <rect x="5" y="14" width="22" height="12" rx="1.5" style="fill:#9c5a22;${ink}" stroke-width="1.8"/>
+    <path d="M5 18H27M10 7.8V26M22 7.8V26" style="fill:none;stroke:#e8b923" stroke-width="1.6"/>
+    <path d="M6.5 14l1 1.7l1-1.7M23 14l1 1.7l1-1.7" style="fill:#fff;stroke:var(--ink);stroke-linejoin:round" stroke-width=".6"/>
+    <rect x="13.5" y="15.5" width="5" height="6" rx="1" style="fill:#e8b923;${ink}" stroke-width="1.2"/>
+  </symbol>
+
+  <symbol id="i-mimic-open" viewBox="0 0 32 32">
+    <path d="M5 12Q5 3 16 3Q27 3 27 12Z" style="fill:#b7712f;${ink}" stroke-width="1.8"/>
+    <path d="M6 12H26L24 21H8Z" style="fill:#5a0d14;${ink}" stroke-width="1.4"/>
+    <path d="M7 12l2 4l2-4l2 4l2-4l2 4l2-4l2 4l2-4l2 4l2-4" style="fill:#fff;stroke:var(--ink);stroke-linejoin:round" stroke-width=".8"/>
+    <path d="M12 21Q14 16 17 18Q20 20 18 25" style="fill:#e0527a;${ink}" stroke-width="1.2"/>
+    <rect x="5" y="20" width="22" height="9" rx="1.5" style="fill:#9c5a22;${ink}" stroke-width="1.8"/>
+    <path d="M8 20l2 -3.5l2 3.5M20 20l2 -3.5l2 3.5" style="fill:#fff;stroke:var(--ink);stroke-linejoin:round" stroke-width=".8"/>
+    <circle cx="11" cy="7.5" r="1.4" style="fill:#ffd23f;stroke:var(--ink)" stroke-width=".8"/>
+    <circle cx="21" cy="7.5" r="1.4" style="fill:#ffd23f;stroke:var(--ink)" stroke-width=".8"/>
+  </symbol>
+
   <symbol id="i-torch" viewBox="0 0 32 32">
     <path d="M14 30L12.6 16h6.8L18 30Z" style="fill:#9c5a22;${ink}" stroke-width="1.6"/>
     <rect x="11.5" y="13.5" width="9" height="3.2" rx="1" style="fill:#6b6f78;${ink}" stroke-width="1.4"/>
@@ -143,6 +162,24 @@
     <path d="M3 10H29M3 22H29" style="fill:none;stroke:var(--ink)" stroke-width="1" opacity=".5"/>
     <circle cx="16" cy="14" r="3.2" style="fill:var(--ink)"/>
     <path d="M14.4 15.5L13.5 21.5H18.5L17.6 15.5Z" style="fill:var(--ink)"/>
+  </symbol>
+
+  <symbol id="i-mimic-lock" viewBox="0 0 32 32">
+    <rect x="3" y="3" width="26" height="26" rx="2" style="fill:currentColor;${ink}" stroke-width="2"/>
+    <path d="M3 10H29M3 22H29" style="fill:none;stroke:var(--ink)" stroke-width="1" opacity=".5"/>
+    <path d="M3.5 21.6l1.2 1.8l1.2-1.8M26.1 21.6l1.2 1.8l1.2-1.8" style="fill:#fff;stroke:var(--ink);stroke-linejoin:round" stroke-width=".6"/>
+    <circle cx="16" cy="14" r="3.2" style="fill:var(--ink)"/>
+    <path d="M14.4 15.5L13.5 21.5H18.5L17.6 15.5Z" style="fill:var(--ink)"/>
+  </symbol>
+
+  <symbol id="i-mimic-door" viewBox="0 0 32 32">
+    <path d="M3 3H29V12H3Z" style="fill:currentColor;${ink}" stroke-width="2"/>
+    <path d="M3 20H29V29H3Z" style="fill:currentColor;${ink}" stroke-width="2"/>
+    <path d="M3 12H29V20H3Z" style="fill:#5a0d14;${ink}" stroke-width="1.4"/>
+    <path d="M4 12l2.5 4l2.5-4l2.5 4l2.5-4l2.5 4l2.5-4l2.5 4l2.5-4l2.5 4l2-4" style="fill:#fff;stroke:var(--ink);stroke-linejoin:round" stroke-width=".8"/>
+    <path d="M5 20l2.5-3.5l2.5 3.5M22 20l2.5-3.5l2.5 3.5" style="fill:#fff;stroke:var(--ink);stroke-linejoin:round" stroke-width=".8"/>
+    <circle cx="11" cy="7.5" r="1.6" style="fill:#ffd23f;stroke:var(--ink)" stroke-width=".8"/>
+    <circle cx="21" cy="7.5" r="1.6" style="fill:#ffd23f;stroke:var(--ink)" stroke-width=".8"/>
   </symbol>
 
   <symbol id="i-door-open" viewBox="0 0 32 32">
@@ -246,14 +283,17 @@
   function objectSvg(o, i) {
     const color = COLORS[o.color] ? ` style="color:${COLORS[o.color]}"` : '';
     let sym = o.type === 'enemy' && o.stalker ? 'i-stalker' : 'i-' + o.type;
-    if (o.type === 'lock' && o.done) sym = 'i-door-open';
+    if (o.type === 'lock' && o.mimic) sym = 'i-mimic-lock';
+    if (o.type === 'enemy' && o.mimic) sym = o.mimic === 'door' ? 'i-mimic-door' : 'i-mimic-open';
+    const opened = o.done && (o.type === 'lock' || o.mimic === 'door'); // a dead door mimic leaves a doorway
+    if (opened) sym = 'i-door-open';
     let out = use(sym, o.x, o.y, color);
     if (o.type === 'enemy' && !o.done && o.maxHp > 1) {
       const bx = o.x * C + C - 9, by = o.y * C + 2;
       out += `<g class="badge"><circle cx="${bx + 4}" cy="${by + 4}" r="6"/><text x="${bx + 4}" y="${by + 7.6}">${o.hp}</text></g>`;
     }
-    if (o.done && o.type !== 'lock' && o.type !== 'portal') out += use('i-cross', o.x, o.y);
-    const cls = o.done && o.type !== 'lock' ? 'obj done' : 'obj';
+    if (o.done && !opened && o.type !== 'portal') out += use('i-cross', o.x, o.y);
+    const cls = o.done && !opened ? 'obj done' : 'obj';
     return `<g class="${cls}" data-obj="${i}">${out}</g>`;
   }
 

@@ -112,6 +112,7 @@ All values use the floor number `f`.
 | **Lock pick** | From floor 4, a floor with a lock has a 30% chance of a lock pick in the start zone. Picked up and carried. |
 | **Stalker** | An enemy with `stalker: true` (floor 12+). It hunts you (2.10). |
 | **Dark chest** | Only on dark floors. Gives the chest's coins plus 1 random spell (one of the 5 kinds, rolled on the floor's dice). |
+| **Mimic** | From floor 19 (2.11). A hidden chest mimic (`type: 'mimic'`) looks like a chest, or a fake door (`type: 'lock', mimic: true`) looks like a locked door. Touching one starts an ambush. |
 | **Portal** | Comes in colored pairs. Stepping onto one moves you to its twin, and the slide continues from the twin in the same direction. Landing on the twin does not trigger it again. Portals are never used up. |
 
 **Encounters.** Moving into an enemy's square counts as an encounter:
@@ -230,6 +231,19 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 | **Picking** | `pickLock()` rolls d20 + DEX against `LOCK_TARGET` (gold 12, crimson 14, azure 16, emerald 18) and always uses up the pick. Success opens the door and continues the move (phase back to `moving`). Failure ends the turn in front of the door. |
 | **Declining** | `declinePick()` adds the door to `declinedPicks`, so it counts as solid until the turn ends, and the slide goes on to the normal redirect. |
 | **Odds** | `rules.pickChance(dex, color)` = `clamp(21 − (target − dex), 0, 20) / 20`. With DEX 1: gold 50%, crimson 40%, azure 30%, emerald 20%. Each extra DEX adds 5%. |
+
+### 2.11 Mimics
+
+| Rule | Detail |
+|---|---|
+| **Where** | Normal floors from `MIMIC_FROM = 19`. `levelgen` rolls `MIMIC_CHANCE = 0.3` once per floor, so there is never more than 1 mimic per floor. It picks a kind at random from the kinds that have a candidate, then one candidate. |
+| **Chest mimic** | One of the floor's ordinary `chest` objects (never a dark chest) becomes `type: 'mimic'`. |
+| **Door mimic** | A `lock` with `mimic: true` and no key, placed in an empty, unlocked doorway. That doorway is never on the only route anywhere: blocking it leaves every other floor square connected. With the real locks and this doorway closed, every key and the torch are still reachable. Its color is one of the floor's real lock colors (or a random one if there are none). Until it wakes it behaves exactly like a lock: it's solid, blocks light, stops shots, and can be Fireballed. |
+| **The tell** | The hidden sprites (`i-mimic`, `i-mimic-lock`) match the real ones except for tiny teeth at the seam. |
+| **Waking** | Walking onto a chest mimic (unless Invisibility is armed: you slip past and it stays hidden). Walking into a door mimic with a key of its color (the key is kept). Choosing **Pick the lock** on it (the pick is kept, and there's no pick roll). |
+| **Ambush** | `ambushMimic(o)`: d20 + DEX against `MIMIC_DODGE = 12`. If you reach it, you take `enemyDamage(f)`; otherwise twice that. The object becomes `{type: 'enemy', mimic: 'chest'\|'door', hp: maxHp: 2 × enemyHealth(f)}` on the same square. You stop on the square before it, and the turn ends (or you die). |
+| **Fight** | After that it is an ordinary enemy that never moves: melee, sling and Fireball all work. It draws as `i-mimic-open` or `i-mimic-door`. |
+| **Reward** | `mimicReward(o)`, from `killEnemy()` and `fireball()`: `2 × (coinValue + sum of bonusDice d6)` coins plus 1 random spell. Melee and sling kills also leave the usual body. Fireball on a still-hidden door mimic also counts as a kill and gives the reward. A dead door mimic is drawn as an open doorway. |
 
 ---
 
@@ -436,8 +450,9 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
 **Obj:**
 
 ```js
-{ type: 'coin'|'chest'|'darkchest'|'heart'|'medpack'|'key'|'lock'|'web'|'enemy'|'portal'|'torch'|'body'|'lockpick',
+{ type: 'coin'|'chest'|'darkchest'|'heart'|'medpack'|'key'|'lock'|'web'|'enemy'|'portal'|'torch'|'body'|'lockpick'|'mimic',
   stalker?,       // enemy: hunts the player (2.10)
+  mimic?,         // lock: true for a fake door; enemy: 'chest' or 'door' once revealed (2.11)
   ammo?,          // body: sling stones it holds
   x, y,
   color?,         // key, lock, portal
@@ -563,6 +578,7 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
     | `coin`, `chest`, `heal`, `key`, `ammo`, `pickup`, `torch` | picking things up |
     | `door` | a key opens a door |
     | `pickOk`, `pickFail` | lock-pick results |
+    | `mimic` | a mimic wakes (followed by `hurt`) |
     | `portal` | teleporting |
     | `shoot`, `miss` | the sling |
     | `stalker` | a stalker moves |
@@ -663,6 +679,11 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
   - Lock picks: a pickable door is a legal direction only while you hold a pick. The prompt appears. Success continues the move, failure breaks the pick and stops, and declining makes the door solid for the turn. The odds are checked.
   - The shop: DEX is always on sale and its price rises.
   - Checkpoints: the new fields round-trip, get defaults in older saves, and bad values are rejected.
+- **Mimics:**
+  - Generation on 6 seeds, floors 4–80: none before floor 19, at most 1 per floor, a rate near 30%, both kinds appear. A door mimic sits alone in a doorway, never cuts the floor apart, and leaves every key and the torch reachable.
+  - The ambush with forced dice: a passed DEX check does normal damage and a failed one double. The move stops before it, the turn ends, it's revealed with double health, and it can kill you. Invisibility slips past a hidden chest mimic.
+  - Fake doors: solid without a key or a pick. A key or a pick wakes it and is kept. A dead door mimic leaves the doorway open.
+  - The reward from melee (plus a body), sling and Fireball kills, and from Fireball on a hidden door mimic.
 - **Tutorial floors:** floor 1 is one 5×5 room with the stairs in the opposite corner and no obstacles. Floor 2 is two rooms with webs, none in the start room. Floor 3 is four chained rooms with a lock guarding the stairs (key reachable), plus an enemy, a web and every item, and no portal. Floor 4 uses the normal generator. `startFloor: 4` skips the tutorial.
 - **Dark floors:** the selection rules (never floors 1–5, shops or two in a row, and a sensible frequency); one torch reachable without keys outside the start room, plus one dark chest; vision radius; walls blocking light; memory; stairs staying marked; preview and fireball limited to what you can see; carried, found and shop torches; the torch resetting each floor; torches in checkpoints.
 - **Saves:** a checkpoint round-trips; a reloaded floor replays identically with the same choices; stats carry over; shop checkpoints open the shop; older saves convert; tampered checkpoints are rejected.

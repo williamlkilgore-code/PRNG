@@ -62,7 +62,7 @@ test('level generation invariants (floors 1-80, 6 seeds)', () => {
         if (o.type !== 'lock') ok(at(o.x, o.y) === 1, `object not in a room ${tag}`);
       }
 
-      const locks = L.objects.filter((o) => o.type === 'lock');
+      const locks = L.objects.filter((o) => o.type === 'lock' && !o.mimic);
       const keys = L.objects.filter((o) => o.type === 'key');
       ok(floor > 1 || locks.length === 0, 'no locks on floor 1');
       const blocked = new Set(locks.map((o) => o.y * L.w + o.x));
@@ -668,6 +668,113 @@ test('lock picks and dexterity', () => {
   ok(old.dex === 1 && old.ammo === R.START_AMMO && old.lockpicks === 0, 'older saves get defaults');
   cp.player.dex = 'x';
   ok(Game.fromSave(cp).error, 'bad dex rejected');
+});
+
+test('mimics: generation', () => {
+  let eligible = 0, withMimic = 0, chests = 0, doors = 0;
+  for (const seed of SEEDS) for (let f = 4; f <= 80; f++) {
+    const L = generateLevel(seed, f);
+    const ms = L.objects.filter((o) => o.type === 'mimic' || o.mimic);
+    ok(ms.length <= 1, `more than one mimic on floor ${f}`);
+    if (f < R.MIMIC_FROM) { ok(ms.length === 0, `mimic before floor ${R.MIMIC_FROM} (${f})`); continue; }
+    eligible++;
+    if (!ms.length) continue;
+    withMimic++;
+    const m = ms[0];
+    if (m.type === 'mimic') { chests++; continue; }
+    doors++;
+    ok(m.type === 'lock' && L.tiles[m.y * L.w + m.x] === 2, 'door mimic sits in a doorway');
+    const all = L.tiles.filter((t) => t !== 0).length;
+    ok(reach(L, L.start.x, L.start.y, new Set([m.y * L.w + m.x])).size === all - 1, 'door mimic never on the only route');
+    const locked = new Set(L.objects.filter((o) => o.type === 'lock').map((o) => o.y * L.w + o.x));
+    const z = reach(L, L.start.x, L.start.y, locked);
+    L.objects.filter((o) => o.type === 'key' || o.type === 'torch').forEach((o) => ok(z.seen[o.y * L.w + o.x], 'key/torch still reachable past a door mimic'));
+    ok(!L.objects.some((o) => o !== m && o.x === m.x && o.y === m.y), 'door mimic shares its square');
+  }
+  const rate = withMimic / eligible;
+  console.log(`     (${withMimic}/${eligible} eligible floors: ${chests} chests, ${doors} doors)`);
+  ok(rate > 0.18 && rate < 0.42, 'mimic rate near 30%: ' + rate);
+  ok(chests > 0 && doors > 0, 'both kinds appear');
+});
+
+test('mimics: ambush, fight and reward', () => {
+  const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
+  const chest = (g) => { g.s.floor = 20; return g; }; // damage 2, health 3, coins 3 + 1d6
+  // Passing the DEX check: normal damage; the move stops before it.
+  let g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  forceRoll(g, 3, 3); g.choose('E');
+  g.d = () => 11; // 11 + DEX 1 = 12
+  g.drainEvents(); run(g);
+  let m = g.s.level.objects[0], hp0 = g.s.player.maxHp;
+  ok(g.s.player.hp === hp0 - 2 && g.s.player.x === 3 && g.s.phase === 'roll', 'dodge: normal damage, stop before it');
+  ok(m.type === 'enemy' && m.mimic === 'chest' && m.hp === 6 && m.maxHp === 6, 'revealed with double health');
+  ok(g.drainEvents().includes('mimic'), 'mimic event');
+  // Failing: double damage.
+  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  forceRoll(g, 3, 3); g.choose('E'); g.d = () => 10; run(g);
+  ok(g.s.player.hp === hp0 - 4, 'failed check: double damage');
+  // Invisibility slips past, and the mimic stays hidden.
+  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  g.s.player.spells.invis = 1;
+  forceRoll(g, 3, 3); g.s.armed.invis = true; g.choose('E'); run(g);
+  ok(g.s.player.hp === hp0 && g.s.player.x === 7 && g.s.level.objects[0].type === 'mimic' && !g.s.level.objects[0].done, 'invisibility passes a mimic');
+  // Melee kill: double chest coins + a spell + a body.
+  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  forceRoll(g, 3, 3); g.choose('E'); g.d = () => 20; run(g);
+  m = g.s.level.objects[0]; m.hp = 1;
+  const spells = () => Object.values(g.s.player.spells).reduce((a, b) => a + b, 0);
+  const c0 = g.s.player.coins, s0 = spells();
+  forceRoll(g, 1, 1); g.d = () => 4; g.choose('E'); run(g);
+  ok(m.done && g.s.player.coins === c0 + 2 * (3 + 4) && spells() === s0 + 1, 'melee kill: 2x chest coins + spell');
+  ok(g.s.level.objects.some((o) => o.type === 'body' && o.x === 4), 'melee kill leaves a body');
+  // Sling kill.
+  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  forceRoll(g, 3, 3); g.choose('E'); g.d = () => 20; run(g);
+  g.s.level.objects[0].hp = 1; g.s.player.x = 1;
+  const c1 = g.s.player.coins;
+  forceRoll(g, 3, 3); g.d = () => 1; g.shoot('E');
+  ok(g.s.level.objects[0].done && g.s.player.coins === c1 + 2 * (3 + 1), 'sling kill gives the hoard');
+  // Fireball kill.
+  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  forceRoll(g, 3, 3); g.choose('E'); g.d = () => 20; run(g);
+  g.s.player.spells.fireball = 1; const c2 = g.s.player.coins;
+  forceRoll(g, 1, 1); g.d = (n) => Math.min(n, 6); g.fireball(0);
+  ok(g.s.level.objects[0].done && g.s.player.coins === c2 + 2 * (3 + 6) && !g.s.level.objects.some((o) => o.type === 'body'), 'fireball kill: hoard, no body');
+  // Death by ambush.
+  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  g.s.player.hp = 3; forceRoll(g, 3, 3); g.choose('E'); g.d = () => 1; run(g);
+  ok(g.s.phase === 'dead', 'ambush can kill');
+});
+
+test('mimics: fake doors', () => {
+  const map = ['#########', '#@..#...#', '#...D..>#', '#...#...#', '#########'];
+  const fake = () => ({ type: 'lock', x: 4, y: 2, color: 'gold', mimic: true });
+  let g = sandbox(map, [fake()]); g.s.floor = 20;
+  g.s.player.x = 3; g.s.player.y = 2;
+  forceRoll(g, 3, 3);
+  ok(!g.availableDirs().includes('E'), 'without key or pick it is a solid door');
+  // A key wakes it, and the key is kept.
+  g.s.player.x = 2; g.s.player.keys = ['gold'];
+  g.choose('E'); g.d = () => 15; run(g);
+  let d = g.s.level.objects[0];
+  ok(d.type === 'enemy' && d.mimic === 'door' && d.hp === 6 && g.s.player.keys.length === 1 && g.s.player.x === 3 && g.s.phase === 'roll', 'key triggers ambush, key kept');
+  // Kill it: the doorway opens.
+  d.hp = 1; forceRoll(g, 3, 3); g.d = () => 2; g.choose('E'); run(g);
+  ok(d.done && g.s.phase === 'levelDone', 'dead door mimic leaves an open doorway');
+  // A lock pick wakes it, and the pick is kept.
+  g = sandbox(map, [fake()]); g.s.floor = 20;
+  g.s.player.x = 2; g.s.player.y = 2; g.s.player.lockpicks = 1;
+  forceRoll(g, 3, 3); g.choose('E'); run(g);
+  ok(g.s.phase === 'pickPrompt', 'pick prompt as for a real door');
+  g.d = () => 5; const r = g.pickLock();
+  ok(r.mimic && g.s.player.lockpicks === 1 && g.s.level.objects[0].mimic === 'door' && g.s.player.hp === g.s.player.maxHp - 4 && g.s.phase === 'roll', 'pick triggers ambush, pick kept');
+  // Fireball on a hidden door mimic.
+  g = sandbox(map, [fake()]); g.s.floor = 20;
+  g.s.player.x = 3; g.s.player.y = 2; g.s.player.spells.fireball = 1;
+  forceRoll(g, 1, 1); g.d = () => 3;
+  const c0 = g.s.player.coins, k0 = g.s.stats.kills;
+  g.fireball(0);
+  ok(g.s.level.objects[0].done && g.s.player.coins === c0 + 2 * (3 + 3) && g.s.stats.kills === k0 + 1, 'fireball on a hidden door mimic gives the hoard');
 });
 
 test('sound events', () => {
