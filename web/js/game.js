@@ -959,7 +959,7 @@
       return true;
     }
 
-    // 1-2 lose the wager, 3-4 money back, 5 money back +2, 6 win double.
+    // 1-2 lose the wager, 3-4 money back, 5 money back +2, 6 money back + 2x wager.
     gamble(wager) {
       const s = this.s, p = s.player;
       wager = Math.floor(wager);
@@ -970,7 +970,7 @@
       if (roll <= 2) { delta = -wager; text = 'You lose your wager.'; }
       else if (roll <= 4) { delta = 0; text = 'Your money back.'; }
       else if (roll === 5) { delta = 2; text = 'Money back, plus 2!'; }
-      else { delta = wager; text = 'You win double!'; }
+      else { delta = 2 * wager; text = 'You win double! Money back plus 2× your bet.'; }
       p.coins += delta;
       if (delta > 0) s.stats.coins += delta;
       s.shop.lastGamble = { roll, wager, delta, text };

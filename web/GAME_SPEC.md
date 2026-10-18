@@ -169,7 +169,7 @@ All values use the floor number `f`.
 | 1–2 | Lose the wager |
 | 3–4 | Money back (net 0) |
 | 5 | Money back plus 2 (net +2) |
-| 6 | Win double (net + wager) |
+| 6 | Win double: money back plus twice the wager (net +2 × wager) |
 
 ### 2.7 Spells
 

@@ -27,7 +27,7 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
 - **Mimics:** from floor 19, a floor has a 30% chance of one mimic: a chest, or a fake locked door in an ordinary doorway (never one you need). It looks almost like the real thing (look for tiny teeth). Touch it, with a key or a lock pick for a door, and it ambushes you: d20 + DEX ≥ 12 takes normal damage, otherwise double, and your move stops. It has twice an enemy's health and never moves. Killing it gives twice a chest's coins plus a random spell.
 - **Portals:** come in color-matched pairs and appear from floor 4. Entering one moves you to its twin and you keep moving. Both ends are always in the same locked-door zone.
 - **Shops:** floor 5 is always a shop. After that a shop appears every 4–10 floors, and never more than 2 in any 10 consecutive floors. Heal, Strength +1 and Dexterity +1 are always offered, plus 4 random offers from: Max Health +2, Gamble, the spells, a torch, sling stones and a lock pick.
-  - **Gamble** results: 1–2 lose the wager, 3–4 money back, 5 money back + 2, 6 win double.
+  - **Gamble** results: 1–2 lose the wager, 3–4 money back, 5 money back + 2, 6 money back plus twice the wager (bet 5, roll 6: get 15 back).
 - **Spells:**
   - **No Clipping:** pass through a wall when the current move carries you all the way through it.
   - **Fireball:** destroy one web, enemy or locked door.

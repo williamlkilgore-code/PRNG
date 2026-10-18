@@ -891,7 +891,7 @@
     ammo: { name: 'Sling stones ×3', desc: 'Three more shots for your sling.', icon: 'i-sling' },
     lockpick: { name: 'Lock pick', desc: 'Try a locked door without its key: d20 + DEX against the door color. Used up either way.', icon: 'i-lockpick' },
     torch: { name: 'Torch', desc: `Carry it; light it on a dark floor to see ${R.TORCH_RADIUS} squares around you until the floor ends.`, icon: 'i-torch' },
-    gamble: { name: 'Gamble', desc: 'Roll a die: 1-2 lose wager · 3-4 money back · 5 money back +2 · 6 win double.', icon: 'i-sp-gamble' },
+    gamble: { name: 'Gamble', desc: 'Roll a die: 1-2 lose wager · 3-4 money back · 5 money back +2 · 6 money back + 2× wager.', icon: 'i-sp-gamble' },
   };
   // "(own N)" next to shop items you can stock up on.
   function ownLabel(id, p) {

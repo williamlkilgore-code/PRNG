@@ -819,7 +819,7 @@ test('shop and gamble', () => {
     for (let i = 0; i < 50; i++) {
       const c = g.s.player.coins;
       const r = g.gamble(4);
-      const exp = r.roll <= 2 ? -4 : r.roll <= 4 ? 0 : r.roll === 5 ? 2 : 4;
+      const exp = r.roll <= 2 ? -4 : r.roll <= 4 ? 0 : r.roll === 5 ? 2 : 8;
       ok(g.s.player.coins - c === exp, 'gamble payout');
     }
   }
