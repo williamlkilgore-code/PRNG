@@ -7,6 +7,8 @@ This document gives a developer or coding agent enough detail to rebuild Dice De
 3. The algorithms, with their exact constants.
 4. Recipes for common changes, plus the invariants the code relies on.
 
+> **Experimental branch (`experimental/movement`): one-die movement.** You roll 2d6 but use only **one** die, chosen by the player, and the other is discarded. The chosen die gives the move count, the direction type (by its parity), and the sling's range. See 2.2. Everything else matches the main branch.
+
 The source of truth is the code in `web/js/`. If this document and the code disagree, the code wins. Fix this document in the same change.
 
 ---
@@ -53,7 +55,11 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
 
 ### 2.2 Turn and movement
 
-1. **Roll** 2d6. Total `T` = d1 + d2.
+1. **Roll** 2d6, then **pick one die** with `pickDie(i)` (stored in `s.die`). Its value `T` is used, and the other die is discarded.
+   - Doubles are picked automatically (`computeSteps()` sets `die = 0`).
+   - You can switch dice until you move or shoot.
+   - Until a die is chosen, `steps = 0`, `parity = null`, and no direction, shot or pass is allowed.
+   - Re-roll and Dark One's Luck keep the chosen die and recompute.
 2. **Movement points:**
    - Normally `steps = T`.
    - If a web caught you last turn, `steps = max(1, floor(T/2))`.
@@ -222,7 +228,7 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 
 | Rule | Detail |
 |---|---|
-| **Shooting** | Only in the `choose` phase (after rolling, before moving), with ammo, as an alternative to moving. `shoot(dir)` uses one of the roll's 4 direction types, and `shotDirs()` lists only directions with at least one open square. The stone flies up to `steps` squares (the move total, halved if webbed). It stops before walls and locked doors (and at a corner squeeze), and hits the first enemy for 1 damage. Ammo −1, then the turn ends. A miss still costs the stone. |
+| **Shooting** | Only in the `choose` phase (after rolling, before moving), with ammo, as an alternative to moving. `shoot(dir)` uses one of the roll's 4 direction types, and `shotDirs()` lists only directions with at least one open square. The stone flies up to `steps` squares (the chosen die, halved if webbed). It stops before walls and locked doors (and at a corner squeeze), and hits the first enemy for 1 damage. Ammo −1, then the turn ends. A miss still costs the stone. |
 | **Bodies** | `killEnemy(o, dropBody)`. Melee and sling kills push a `body` object with `ammo: d2` onto the enemy's square. Fireball kills don't. |
 | **Stalkers** | `rules.stalkerCount(f)` = 0 below floor 12, then `min(3, 1 + floor((f − 12)/8))`. `levelgen` flags that many of the placed enemies as `stalker`, chosen at random. |
 | **Stalker turns** | `endTurn()` calls `moveStalkers()` after every turn except reaching the stairs. Each stalker that **sees** you moves 1 square toward you: the step that most reduces Chebyshev distance, then Manhattan distance, preferring straight steps. It never enters walls, locks, webs, items or other enemies, and obeys the corner rule. If it's already next to you, it attacks instead: the same `encounter()` as melee (it deals floor damage, you hit back with STR, and a kill leaves a body). |
@@ -393,7 +399,7 @@ Neighboring rooms share a one-square wall, which gives the "graph paper" look. E
 | Phase | Allowed actions |
 |---|---|
 | `roll` | Roll, Fireball, arm No Clipping or Invisibility |
-| `choose` | Choose a direction, Pass (only when no direction is legal), Re-roll, Dark One's Luck, Fireball, arm spells |
+| `choose` | Pick a die (`pickDie(i)`, required before anything below), choose a direction, Pass (only when no direction is legal), Re-roll, Dark One's Luck, Fireball, arm spells |
 | `moving` | Nothing (the UI is animating) |
 | `choose` (extra) | Shoot with the sling (`shoot(dir)`) instead of moving |
 | `redirect` | Choose a direction, Fireball, arm spells |
@@ -667,6 +673,7 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
 - **The shop schedule:** floor 5, gap range, and the at-most-2-in-10 rule for every window up to floor 600, across several seeds.
 - **Level invariants** for floors 1–80 on 6 seeds: room size ≥ 3×3, closed border, object placement, lock walls on opposite sides, one key per lock, keys reachable with all locks closed, full connectivity, stairs reachable, portal pairing and lock zones, obstacles present.
 - **Determinism:** the same seed gives the same level.
+- **One-die movement:** no directions, shots or pass before a die is picked. Each die's value and parity are used, you can switch before moving but not after, doubles are auto-picked, and a web halves the die (minimum 1). The sling range equals the die. Re-roll and Luck keep the choice. `forceRoll(g, a, b)` in the tests sets both dice to `a + b` and picks die 0, so older scenarios keep their step counts.
 - **Scripted scenarios** on small hand-made maps (`sandbox([...rows])`, where `#` is wall, `D` is doorway, `@` is start and `>` is stairs). They cover parity, sliding, redirect and no doubling back, webs, combat, keys and locks, portals, every spell, and the shop and gamble payouts.
 - **Sound events:** a move emits `roll`, `step`, `coin`, `hurt`, `kill` and `web` as it happens. Shots emit `shoot` plus `hit` or `miss`, and you also get `stairs` and `pickFail`. `drainEvents()` empties the list, and events never appear in the state or in checkpoints. `audio.js` isn't loaded in Node; check it in a browser through `DC.audio.recent` and `DC.audio.mood`.
 - **Sling, stalkers and lock picks:**

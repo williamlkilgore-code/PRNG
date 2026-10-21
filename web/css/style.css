@@ -279,6 +279,12 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .face-grid button { padding: 0; border: 2px solid transparent; border-radius: 10px; background: none; cursor: pointer; }
 .face-grid button.sel { border-color: var(--accent); background: var(--paper); }
 .face-grid .die { width: 40px; height: 40px; }
+.die-pick { background: none; border: 2.5px solid transparent; border-radius: 14px; padding: 2px; line-height: 0; cursor: pointer; color: inherit; }
+.die-pick:disabled { cursor: default; }
+.die-pick:not(:disabled) { border-color: var(--ink); border-style: dashed; }
+.die-pick:not(:disabled):hover { background: var(--paper); }
+.die-pick.chosen { border-color: #2f80d0; border-style: solid; background: color-mix(in srgb, #2f80d0 14%, transparent); }
+.die-pick.discarded { opacity: .35; }
 .die-btn { background: none; border: 2px solid var(--ink); border-radius: 12px; padding: 6px; cursor: pointer; }
 .die-btn:hover { background: var(--paper); }
 

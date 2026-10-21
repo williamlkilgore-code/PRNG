@@ -156,10 +156,13 @@ function sandbox(rows, extra) {
   g.rebuildIndex();
   return g;
 }
+// One-die variant: scenarios written for a total of a + b use a single
+// chosen die showing that total, so step counts and parity stay the same.
 function forceRoll(g, a, b) {
   g.s.phase = 'roll';
   g.roll();
-  g.s.dice = [a, b];
+  g.s.dice = [a + b, a + b];
+  g.s.die = 0;
   g.computeSteps();
 }
 function run(g) { let n = 0; while (g.s.phase === 'moving' && n++ < 200) g.step(); }
@@ -237,7 +240,7 @@ function playFloor(g, policySeed) {
   const pick = new DC.RNG(policySeed);
   for (let i = 0; i < 3000; i++) {
     const s = g.s;
-    if (s.phase === 'roll') g.roll();
+    if (s.phase === 'roll') { g.roll(); if (g.s.die === null) g.pickDie(pick.int(0, 1)); }
     else if (s.phase === 'choose' || s.phase === 'redirect') {
       const d = g.availableDirs();
       if (!d.length) g.passTurn(); else g.choose(pick.pick(d));
@@ -355,12 +358,49 @@ test('redirect allows any legal direction except straight back', () => {
   ok(!g.choose('SE'), 'SE retraces and is refused');
 });
 
+test('one-die movement', () => {
+  const map = ['###########', '#.........#', '#....@....#', '#.........#', '#........>#', '###########'];
+  const g = sandbox(map);
+  g.s.phase = 'roll'; g.roll();
+  g.s.dice = [3, 4]; g.s.die = null; g.computeSteps();
+  ok(g.s.steps === 0 && g.s.parity === null && g.availableDirs().length === 0, 'no directions before picking a die');
+  ok(!g.choose('E') && !g.passTurn() && !g.canShoot(), 'no move, pass or shot before picking');
+  ok(g.pickDie(0) && g.s.steps === 3 && g.s.parity === 'diag', 'odd die: diagonal');
+  ok(g.availableDirs().every((d) => d.length === 2), 'diagonal directions');
+  ok(g.pickDie(1) && g.s.steps === 4 && g.s.parity === 'ortho', 'switch to the even die: orthogonal');
+  ok(g.availableDirs().every((d) => d.length === 1) && g.canShoot(), 'straight directions, can shoot');
+  ok(!g.pickDie(2), 'only dice 0 and 1');
+  ok(g.choose('W'), 'move');
+  ok(!g.pickDie(0), 'cannot switch after moving');
+  run(g);
+  ok(g.s.player.x === 1 && g.s.phase === 'roll', 'moved 4 squares with the even die');
+  // Doubles are picked automatically.
+  g.roll(); g.s.dice = [2, 2]; g.s.die = null; g.computeSteps();
+  ok(g.s.die === 0 && g.s.steps === 2, 'doubles auto-picked');
+  // Webs halve the chosen die (min 1).
+  g.s.phase = 'roll'; g.s.player.webbed = true; g.roll();
+  g.s.dice = [1, 5]; g.s.die = null; g.pickDie(0);
+  ok(g.s.steps === 1 && g.s.halved, 'halved die is at least 1');
+  g.pickDie(1);
+  ok(g.s.steps === 2, '5 halved to 2');
+  // Sling range is the chosen die.
+  const h = sandbox(['###########', '#@.......E#', '#........>#', '###########'], [{ type: 'enemy', x: 9, y: 1, hp: 1, maxHp: 1 }]);
+  h.roll(); h.s.dice = [6, 2]; h.s.die = null; h.pickDie(1);
+  ok(h.shotPath('E').cells.length === 2 && !h.shotPath('E').target, 'range 2');
+  h.pickDie(0);
+  ok(h.shotPath('E').cells.length === 6, 'range 6');
+  // Spells keep the chosen die.
+  h.s.player.spells.reroll = 1; h.s.player.spells.luck = 1;
+  h.d = () => 4; ok(h.reroll(1) && h.s.die === 0 && h.s.steps === 6, 're-roll keeps the choice');
+  ok(h.darkLuck(1, 6) && h.s.die === 0 && h.s.steps === 1 && h.s.parity === 'diag', 'luck keeps the choice');
+});
+
 test('web stops and halves next move', () => {
   const g = sandbox(['#########', '#@......#', '#......>#', '#########'], [{ type: 'web', x: 3, y: 1 }]);
   forceRoll(g, 3, 3);
   g.choose('E'); run(g);
   ok(g.s.player.x === 3 && g.s.phase === 'roll' && g.s.player.webbed, 'stopped on web');
-  g.roll(); g.s.dice = [3, 3]; g.computeSteps();
+  g.roll(); g.s.dice = [6, 2]; g.pickDie(0);
   ok(g.s.steps === 3 && g.s.halved, 'halved next turn');
 });
 
@@ -419,7 +459,7 @@ test('spells', () => {
   ok(g.s.player.x === 3 && g.s.player.hp === 10 && !g.s.level.objects[0].done && g.s.player.spells.invis === 0, 'invisible pass');
   // Dark one's luck then no-clip through the wall.
   forceRoll(g, 1, 2);
-  ok(g.darkLuck(3, 3), 'luck');
+  ok(g.darkLuck(6, 1), 'luck');
   ok(g.s.steps === 6 && g.s.parity === 'ortho', 'luck set dice');
   ok(!g.availableDirs().includes('E') || g.legalMove('E', 6).kind === 'normal', 'pre-noclip');
   g.toggleArm('noclip');
@@ -837,7 +877,7 @@ test('random play simulation', () => {
       const s = g.s;
       if (s.phase === 'dead') { deaths++; break; }
       if (s.phase === 'levelDone' || s.phase === 'shop') { g.nextFloor(); floors++; if (s.floor > 30) break; continue; }
-      if (s.phase === 'roll') { g.roll(); continue; }
+      if (s.phase === 'roll') { g.roll(); if (g.s.die === null) g.pickDie(pick.int(0, 1)); continue; }
       if (s.phase === 'choose' && g.canShoot() && pick.chance(0.1)) { g.shoot(pick.pick(g.shotDirs())); continue; }
       if (s.phase === 'choose' || s.phase === 'redirect') {
         const d = g.availableDirs();

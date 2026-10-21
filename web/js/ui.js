@@ -111,9 +111,9 @@
   /* One-time tips shown as pop-ups the first time something comes up.
    * Seen hints and the on/off switch live in localStorage. */
   const HINTS = {
-    start: { icon: 'i-start', title: 'Welcome to the dungeon', text: 'Tap <b>Roll</b> in the middle of the direction pad. The two dice add up to how many squares you move. Reach the <b>staircase</b> to finish the floor.' },
-    even: { icon: 'i-sp-reroll', title: 'Even roll: move straight', text: 'An even total moves you up, down, left or right. Tap the map in the direction you want to go (or use the pad). You keep sliding until your moves run out.' },
-    odd: { icon: 'i-sp-reroll', title: 'Odd roll: move diagonally', text: 'An odd total moves you diagonally. Tap the map toward the corner you want. You keep sliding until your moves run out.' },
+    start: { icon: 'i-start', title: 'Welcome to the dungeon', text: 'Tap <b>Roll</b> in the middle of the direction pad. Then <b>tap one of the two dice</b>: its number is how many squares you move, and the other die is discarded. Reach the <b>staircase</b> to finish the floor.' },
+    even: { icon: 'i-sp-reroll', title: 'Even die: move straight', text: 'An even die moves you up, down, left or right. Tap the map in the direction you want to go (or use the pad). You keep sliding until your moves run out.' },
+    odd: { icon: 'i-sp-reroll', title: 'Odd die: move diagonally', text: 'An odd die moves you diagonally. Tap the map toward the corner you want. You keep sliding until your moves run out.' },
     blocked: { icon: 'i-stairs', title: 'Blocked!', text: "You hit something with moves left. Pick a new direction to keep going. You can't turn straight back the way you came, unless that's the only way." },
     doorway: { icon: 'i-door-open', title: 'Doorways', text: 'Rooms are joined by gaps in the wall. Slide through a doorway to reach the next room.' },
     web: { icon: 'i-web', title: 'Spider webs', text: 'Running into a web stops you on the spot, and your <b>next</b> move is halved. Steer around them when you can.' },
@@ -122,7 +122,7 @@
     items: { icon: 'i-chest', title: 'Treasure', text: 'Coins buy things in shops (floor 5 is the first). Chests hold extra coins. Hearts and med packs heal you.' },
     portal: { icon: 'i-portal', title: 'Portals', text: 'Step into a portal and you come out of its matching twin, still moving in the same direction.' },
     dark: { icon: 'i-moon', title: 'A dark floor', text: "You can only see the squares next to you. Every dark floor has a torch you can reach without keys. Pick it up to see 4 squares around you. There's also a dark chest with a free spell." },
-    shoot: { icon: 'i-sling', title: 'Your sling', text: 'After rolling you can <b>shoot instead of moving</b>: tap the sling, then a direction. The stone flies as far as your roll in a straight or diagonal line (same as your move) and hits the first enemy for 1 damage. Enemies you kill leave bodies; walk over them to collect stones.' },
+    shoot: { icon: 'i-sling', title: 'Your sling', text: 'After rolling and picking a die you can <b>shoot instead of moving</b>: tap the sling, then a direction. The stone flies as far as your chosen die in a straight or diagonal line (same as your move) and hits the first enemy for 1 damage. Enemies you kill leave bodies; walk over them to collect stones.' },
     stalker: { icon: 'i-stalker', title: 'Stalkers', text: 'These hooded enemies hunt you. After each of your turns, a stalker that can see you moves one square closer, and attacks if it is next to you. On dark floors they spot you only up close, unless your torch is lit, which they can see from anywhere.' },
     mimic: { icon: 'i-mimic-open', title: 'Mimic!', text: "Deep in the dungeon, some chests and locked doors are monsters in disguise. When one wakes it bites first: d20 + DEX of 12 or more takes a normal bite, anything less doubles it. It has double an enemy's health and never moves. Kill it for twice a chest's coins plus a random spell. Look closely: a mimic shows tiny teeth at its seam." },
     lockpick: { icon: 'i-lockpick', title: 'Lock picks', text: "With a lock pick, walking into a locked door you don't have the key for lets you try the lock: d20 + DEX must reach the door's number (gold 12, crimson 14, azure 16, emerald 18). Buy DEX in the shop to get better at it." },
@@ -156,7 +156,7 @@
       if (L.objects.some((o) => o.stalker && !o.done)) queueHint('stalker');
     }
     if (L && L.objects.some((o) => o.type === 'enemy' && o.mimic && !o.done)) queueHint('mimic');
-    if (s.phase === 'choose' && s.dice) queueHint(s.parity === 'ortho' ? 'even' : 'odd');
+    if (s.phase === 'choose' && s.dice && s.die !== null) queueHint(s.parity === 'ortho' ? 'even' : 'odd');
     if (s.phase === 'redirect') queueHint('blocked');
     if (Object.values(s.player.spells).some((n) => n > 0)) queueHint('spells');
     if (s.phase === 'choose' && s.floor >= 3 && game.canShoot()) queueHint('shoot');
@@ -223,12 +223,21 @@
 
   function renderPanel() {
     const s = game.s;
+    // One-die variant: in the choose phase the dice are buttons. The chosen
+    // die is highlighted and the other is marked as discarded once you move.
     const dice = s.dice || [0, 0];
-    $('#dice').innerHTML = RD.dieSvg(dice[0], ui.rolled ? 'rolling' : '') + RD.dieSvg(dice[1], ui.rolled ? 'rolling' : '');
+    const picking = !ui.busy && s.phase === 'choose' && !!s.dice;
+    $('#dice').innerHTML = dice.map((v, i) => {
+      const cls = !s.dice || s.die === null ? '' : s.die === i ? ' chosen' : ' discarded';
+      return `<button type="button" class="die-pick${cls}" data-die="${i}" ${picking ? '' : 'disabled'}
+        aria-label="Use die ${i + 1}${v ? ' (' + v + ')' : ''}" aria-pressed="${s.die === i}">${RD.dieSvg(v, ui.rolled ? 'rolling' : '')}</button>`;
+    }).join('');
     ui.rolled = false;
 
     const info = $('#diceInfo');
-    if (s.dice && s.level) {
+    if (s.dice && s.level && s.die === null) {
+      info.innerHTML = `<span class="big">Pick</span>a die${s.halved ? '<br><span class="tag halved">webbed ½</span>' : ''}`;
+    } else if (s.dice && s.level) {
       const left = s.phase === 'moving' || s.phase === 'redirect' ? s.move.stepsLeft : s.steps;
       const moving = s.phase === 'moving' || s.phase === 'redirect';
       info.innerHTML = `<span class="big">${left}</span>${moving ? 'moves left' : 'moves'}<br>
@@ -261,7 +270,7 @@
       if (mode === 'roll') { center.innerHTML = `${DIE_ICON}<span>Roll</span>`; center.setAttribute('aria-label', 'Roll dice'); }
       else if (mode === 'pass') { center.innerHTML = '<span>Pass</span>'; center.setAttribute('aria-label', 'Pass turn'); }
       else {
-        const moving = s.dice && s.level && ['choose', 'redirect', 'moving'].includes(s.phase);
+        const moving = s.dice && s.level && s.die !== null && ['choose', 'redirect', 'moving'].includes(s.phase);
         center.innerHTML = moving ? `${game.stepsLeft()}<small>moves</small>` : '·';
         center.setAttribute('aria-label', moving ? `${game.stepsLeft()} moves left` : 'Waiting');
       }
@@ -328,6 +337,7 @@
     switch (s.phase) {
       case 'roll': return s.player.webbed ? 'Still tangled in web: this roll is halved. Tap Roll.' : 'Tap Roll (center of the pad) or press Space.';
       case 'choose': {
+        if (s.die === null) return 'Tap a die to use it. Its number is how far you move or shoot: odd goes diagonally, even goes straight. The other die is discarded.';
         const n = game.availableDirs().length;
         if (!n) return 'No legal move with this roll. Tap Pass (or use a spell).';
         return `Tap the map in a ${s.parity === 'ortho' ? 'straight (orthogonal)' : 'diagonal'} direction. You keep going until your ${s.steps} moves run out or you're blocked.`;
@@ -554,6 +564,11 @@
         ${RD.icon('i-sp-' + n)}<span class="count">0</span></button>`).join('') +
       `<button type="button" class="spell torch-btn" id="torchBtn" title="Torch: light it on a dark floor to see up to ${R.TORCH_RADIUS} squares away until the floor ends." aria-label="Light a torch">
         ${RD.icon('i-torch')}<span class="count">0</span></button>`;
+    $('#dice').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-die]');
+      if (b && !b.disabled && !ui.busy && game.pickDie(+b.dataset.die)) render();
+    });
+
     $('#spells').addEventListener('click', (e) => {
       if (e.target.closest('#torchBtn')) { if (!ui.busy && game.lightTorch()) { render(); save(); } return; }
       const b = e.target.closest('[data-spell]');
@@ -572,6 +587,7 @@
         return;
       }
       if (e.key === 'm' || e.key === 'M') { AU.toggleMute(); renderSoundBtn(); return; }
+      if ((e.key === '[' || e.key === ']') && !ui.busy && game.pickDie(e.key === '[' ? 0 : 1)) { render(); return; }
       if (e.key === 'Escape' && (ui.targeting || ui.aiming)) { ui.targeting = false; ui.aiming = false; render(); return; }
       const dir = KEYMAP[e.key.length === 1 ? e.key.toLowerCase() : e.key];
       if (dir) { e.preventDefault(); choose(dir); }
@@ -606,7 +622,7 @@
     openModal(`
       <h2>Dice Delve</h2>
       <div class="hero">${RD.icon('i-start')}${RD.icon('i-sp-luck')}${RD.icon('i-enemy')}${RD.icon('i-chest')}${RD.icon('i-stairs')}</div>
-      <p>A roll-and-write dungeon crawl. Roll two dice, pick a direction, and slide through procedurally generated floors to reach the staircase.</p>
+      <p>A roll-and-write dungeon crawl. Roll two dice, keep one, pick a direction, and slide through procedurally generated floors to reach the staircase.</p>
       ${b ? `<p class="muted">Deepest floor reached: ${b}</p>` : ''}
       <h3>Seed</h3>
       <input type="text" id="seedInput" placeholder="Leave blank for a random dungeon" maxlength="40" autocomplete="off">
@@ -798,8 +814,8 @@
       <h2>How to play</h2>
       <h3>Moving</h3>
       <ul>
-        <li>Roll 2 dice. The total is how many squares you move.</li>
-        <li><b>Even</b> total: move orthogonally (↑ ↓ ← →). <b>Odd</b> total: move diagonally.</li>
+        <li>Roll 2 dice, then pick <b>one</b> of them (tap it, or press <b>[</b> / <b>]</b>). Its number is how many squares you move, or how far your sling shoots. The other die is discarded. Doubles are picked for you.</li>
+        <li><b>Even</b> die: move orthogonally (↑ ↓ ← →). <b>Odd</b> die: move diagonally.</li>
         <li>Pick a direction and you keep going that way until your moves run out. If you're blocked with moves left, pick a new legal direction. The only direction you can't pick is straight back the way you came, unless that's the only legal move.</li>
         <li>Reach the staircase to descend. Your pencil trail shows where you've been.</li>
       </ul>
@@ -819,7 +835,7 @@
         ${legend('i-moon', 'Dark floor (from floor 6, never two in a row): you only see the squares next to you. Seen walls stay sketched; deeper down you stop remembering items (floor 20+) and then walls too (floor 35+). Seen stairs always stay marked.')}
         ${legend('i-torch', `Torch: every dark floor has one you can reach without keys. It lights at once and lets you see ${R.TORCH_RADIUS} squares (walls block light) until the floor ends. Torches bought in the shop are carried; tap the torch button to light one on a dark floor.`)}
         ${legend('i-darkchest', 'Dark chest: on every dark floor. Chest coins plus a random spell.')}
-        ${legend('i-sling', `Sling: after rolling, shoot instead of moving. The stone travels up to your roll in the roll's direction type and hits the first enemy for 1 damage, then your turn ends. You start with ${R.START_AMMO} stones.`)}
+        ${legend('i-sling', `Sling: after rolling and picking a die, shoot instead of moving. The stone travels up to your die's number, in its direction type, and hits the first enemy for 1 damage, then your turn ends. You start with ${R.START_AMMO} stones.`)}
         ${legend('i-body', 'Body: enemies killed in melee or by the sling leave one. Walk over it to collect 1–2 sling stones. Fireball leaves nothing.')}
         ${legend('i-stalker', `Stalker (floor ${R.STALKER_FROM}+): after each turn, if it can see you it moves one square closer, attacking when adjacent. On dark floors it sees you only within 2 squares, or from anywhere while your torch is lit.`)}
         ${legend('i-mimic-open', `Mimic (floor ${R.MIMIC_FROM}+): some chests and locked doors are monsters. Touch one and it ambushes you: d20 + DEX ≥ ${R.MIMIC_DODGE} takes normal damage, otherwise double, and your move stops. It has twice an enemy's health and never moves. Killing it gives twice a chest's coins plus a random spell.`)}

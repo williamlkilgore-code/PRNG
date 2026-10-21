@@ -2,6 +2,8 @@
 
 A procedurally generated roll-and-write dungeon crawler that runs in the browser. All graphics are inline SVG, and there are no dependencies or build step.
 
+> **Experimental branch: one-die movement.** Roll 2d6, then tap one die (or press `[` / `]`). Its number is how far you move, or how far your sling shoots. The other die is discarded. Doubles are picked for you. Everything else is the same as the main branch.
+
 **Play:** open `web/index.html` in a browser. It works straight from the file system, or you can serve the folder with any static server (`python3 -m http.server -d web`).
 
 **Test:** `node web/tests/run-tests.js`
@@ -10,7 +12,7 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
 
 ## Rules implemented
 
-- **Movement:** roll 2d6. The total is how many squares you move. An even total moves orthogonally and an odd total moves diagonally. Once you pick a direction you keep going until your moves run out. If you're blocked with moves left, you pick a new legal direction. The only direction you can't pick is straight back the way you came, unless that's the only legal move. Diagonal moves can't squeeze between two walls that meet at a corner.
+- **Movement:** roll 2d6 and keep one die. Its number is how many squares you move. An even die moves orthogonally and an odd die moves diagonally. Once you pick a direction you keep going until your moves run out. If you're blocked with moves left, you pick a new legal direction. The only direction you can't pick is straight back the way you came, unless that's the only legal move. Diagonal moves can't squeeze between two walls that meet at a corner.
 - **Tutorial:** floors 1–3 teach the game. Floor 1 is a single 5×5 room. Floor 2 is two rooms with webs. Floor 3 is a small four-room dungeon with every feature except portals. One-time hint pop-ups explain each new thing; turn them off from the pop-up or the Rules screen. Skip the tutorial with the checkbox on the New game screen.
 - **Floors:** from floor 4, floors grow from 17×13 to at most 21×15. Rooms are at least 3×3 and joined by one-cell doorways. The start square is a smiley face. Stepping onto the staircase ends the floor.
 - **Spider web:** stops movement at once, and the next roll's movement is halved (rounded down, minimum 1). The roll's parity still decides orthogonal or diagonal.
@@ -21,7 +23,7 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
 - **Heart:** heals `ceil(level/20)`, up to max health.
 - **Med pack:** heart value + 1d4 per `ceil(level/20)`.
 - **Dark floors:** from floor 6, some floors (never two in a row, never shops) are dark. You see only the squares next to you until you light a torch, which shows 4 squares (walls block light) until the floor ends. Every dark floor has a torch you can reach without keys and a dark chest (coins plus a random spell). Torches can also be bought in the shop and carried. Seen areas stay sketched in pencil, but deeper floors remember less: items are forgotten from floor 20 and walls from floor 35. Seen stairs always stay marked.
-- **Sling:** after rolling you can shoot instead of moving. The stone flies as far as your roll, in a straight or diagonal line matching the roll, and hits the first enemy for 1 damage. Your turn then ends. You start with 3 stones. Enemies killed in melee or by the sling leave bodies with 1–2 stones to collect. Stones can also be bought.
+- **Sling:** after rolling you can shoot instead of moving. The stone flies as far as your chosen die, in a straight or diagonal line matching the die, and hits the first enemy for 1 damage. Your turn then ends. You start with 3 stones. Enemies killed in melee or by the sling leave bodies with 1–2 stones to collect. Stones can also be bought.
 - **Stalkers:** from floor 12, some enemies hunt you. After each turn, a stalker that can see you moves 1 square closer, and attacks if it's next to you. On dark floors it only spots you within 2 squares, unless your torch is lit.
 - **Lock picks and Dexterity:** walking into a locked door without its key, while carrying a lock pick, asks whether to try it: d20 + DEX against the door color (gold 12, crimson 14, azure 16, emerald 18). Success opens the door and you keep moving. Failure breaks the pick and stops your move. DEX starts at 1, and DEX +1 is always for sale in the shop. Picks are found on some floors with locks, or bought.
 - **Mimics:** from floor 19, a floor has a 30% chance of one mimic: a chest, or a fake locked door in an ordinary doorway (never one you need). It looks almost like the real thing (look for tiny teeth). Touch it, with a key or a lock pick for a door, and it ambushes you: d20 + DEX ≥ 12 takes normal damage, otherwise double, and your move stops. It has twice an enemy's health and never moves. Killing it gives twice a chest's coins plus a random spell.

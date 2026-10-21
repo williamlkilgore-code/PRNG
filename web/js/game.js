@@ -60,7 +60,7 @@
           spells: { noclip: 0, fireball: 0, luck: 0, reroll: 0, invis: 0 },
         },
         diceState: 0,
-        dice: null, steps: 0, parity: null, halved: false,
+        dice: null, die: null, steps: 0, parity: null, halved: false,
         usedDirs: [], move: null,
         armed: { noclip: false, invis: false }, invisUsed: false,
         declinedPicks: [], pickTarget: -1,
@@ -247,6 +247,7 @@
     availableDirs() {
       const s = this.s;
       if (s.phase !== 'choose' && s.phase !== 'redirect') return [];
+      if (s.die === null) return []; // pick a die first
       const steps = this.stepsLeft();
       const legal = (s.parity === 'ortho' ? ORTHO : DIAG).filter((d) => this.legalMove(d, steps));
       if (s.phase === 'choose') return legal;
@@ -279,7 +280,7 @@
     enterFloor(f) {
       const s = this.s, p = s.player;
       s.floor = f;
-      s.dice = null; s.move = null; s.usedDirs = []; s.halved = false;
+      s.dice = null; s.die = null; s.move = null; s.usedDirs = []; s.halved = false;
       s.armed = { noclip: false, invis: false }; s.invisUsed = false;
       s.declinedPicks = []; s.pickTarget = -1;
       p.keys = []; p.webbed = false;
@@ -380,26 +381,40 @@
     }
 
     // ------------------------------------------------------------------ turns
+    /* One-die movement: you pick one of the two dice and the other is
+     * discarded. The chosen die is both the move count and, by its parity,
+     * the direction type. Equal dice are chosen automatically. */
     computeSteps() {
       const s = this.s;
-      const total = s.dice[0] + s.dice[1];
-      s.parity = total % 2 === 0 ? 'ortho' : 'diag';
-      s.steps = s.halved ? Math.max(1, Math.floor(total / 2)) : total;
+      if (s.die === null && s.dice[0] === s.dice[1]) s.die = 0;
+      if (s.die === null) { s.parity = null; s.steps = 0; return; }
+      const v = s.dice[s.die];
+      s.parity = v % 2 === 0 ? 'ortho' : 'diag';
+      s.steps = s.halved ? Math.max(1, Math.floor(v / 2)) : v;
+    }
+
+    // Choose which die to use (can be changed until you move or shoot).
+    pickDie(i) {
+      const s = this.s;
+      if (s.phase !== 'choose' || !s.dice || (i !== 0 && i !== 1)) return false;
+      s.die = i;
+      this.computeSteps();
+      return true;
     }
 
     roll() {
       const s = this.s, p = s.player;
       if (s.phase !== 'roll') return false;
       s.dice = [this.d(6), this.d(6)];
+      s.die = null;
       this.emit('roll');
       s.halved = p.webbed;
       p.webbed = false;
       s.usedDirs = [];
       this.computeSteps();
       s.phase = 'choose';
-      const t = s.dice[0] + s.dice[1];
-      this.log(`Rolled ${s.dice[0]} + ${s.dice[1]} = ${t} (${s.parity === 'ortho' ? 'orthogonal' : 'diagonal'})` +
-        (s.halved ? `, halved by the web to ${s.steps}` : '') + '.', 'roll');
+      this.log(`Rolled ${s.dice[0]} and ${s.dice[1]}: ${s.die === null ? 'pick one' : 'a double'}` +
+        (s.halved ? ' (halved by the web)' : '') + '.', 'roll');
       return true;
     }
 
@@ -414,7 +429,7 @@
     }
 
     passTurn() {
-      if (this.s.phase !== 'choose' || this.availableDirs().length) return false;
+      if (this.s.phase !== 'choose' || this.s.die === null || this.availableDirs().length) return false;
       this.endTurn('No legal move. The turn passes.');
       return true;
     }
@@ -684,7 +699,7 @@
     // ------------------------------------------------------------------ sling
     canShoot() {
       const s = this.s;
-      return !!(s.level && s.phase === 'choose' && s.player.ammo > 0);
+      return !!(s.level && s.phase === 'choose' && s.die !== null && s.player.ammo > 0);
     }
 
     // Directions of the roll's type with at least one open square to fly through.
@@ -693,7 +708,7 @@
       return (this.s.parity === 'ortho' ? ORTHO : DIAG).filter((d) => this.shotPath(d).cells.length > 0);
     }
 
-    /* Squares a shot crosses: up to the move total, stopping before walls and
+    /* Squares a shot crosses: up to the chosen die, stopping before walls and
      * locked doors, and at the first enemy. */
     shotPath(dir) {
       const s = this.s, [dx, dy] = DIRS[dir];
@@ -845,8 +860,13 @@
       s.player.spells.reroll--;
       this.computeSteps();
       this.emit('roll');
-      this.log(`Re-roll: die ${i + 1} ${old} → ${s.dice[i]}. Move ${s.steps}, ${s.parity === 'ortho' ? 'orthogonal' : 'diagonal'}.`, 'spell');
+      this.log(`Re-roll: die ${i + 1} ${old} → ${s.dice[i]}.${this.dieSummary()}`, 'spell');
       return true;
+    }
+
+    dieSummary() {
+      const s = this.s;
+      return s.die === null ? ' Pick a die.' : ` Using ${s.dice[s.die]}: move ${s.steps}, ${s.parity === 'ortho' ? 'orthogonal' : 'diagonal'}.`;
     }
 
     darkLuck(a, b) {
@@ -857,7 +877,7 @@
       s.player.spells.luck--;
       this.computeSteps();
       this.emit('spell');
-      this.log(`Dark One's Luck bends fate: ${a} + ${b}. Move ${s.steps}, ${s.parity === 'ortho' ? 'orthogonal' : 'diagonal'}.`, 'spell');
+      this.log(`Dark One's Luck bends fate: ${a} and ${b}.${this.dieSummary()}`, 'spell');
       return true;
     }
 
