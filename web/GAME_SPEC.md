@@ -7,7 +7,13 @@ This document gives a developer or coding agent enough detail to rebuild Dice De
 3. The algorithms, with their exact constants.
 4. Recipes for common changes, plus the invariants the code relies on.
 
-> **Experimental branch (`experimental/movement`): one-die movement.** You roll 2d6 but use only **one** die, chosen by the player, and the other is discarded. The chosen die gives the move count, the direction type (by its parity), and the sling's range. See 2.2. Everything else matches the main branch.
+> **Experimental branch (`experimental/movement`).** This branch differs from the main branch in several ways:
+> - **One-die movement:** roll 2d6 and keep **one** die, chosen by the player. It gives the move count, the direction type (by its parity) and the shot range (2.2).
+> - **An optional tutorial** that doesn't count as floors (2.3).
+> - **Simpler floors 1–10** (2.8).
+> - **A base hero with classes and level-ups** (2.12).
+> - **Cut-scenes** (7).
+> - **Saves mirrored to IndexedDB** (6.5).
 
 The source of truth is the code in `web/js/`. If this document and the code disagree, the code wins. Fix this document in the same change.
 
@@ -42,14 +48,16 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
 
 | Stat | Start | Notes |
 |---|---|---|
-| Health (`hp`) | 10 | 0 means death and the game ends |
-| Max health (`maxHp`) | 10 | Healing never goes above this |
+| Health (`hp`) | 7 (`START_HP`) | 0 means death and the game ends |
+| Max health (`maxHp`) | 7 | Healing never goes above this |
 | Strength (`str`) | 1 | Damage dealt to an enemy per encounter |
 | Coins | 0 | Spent in shops |
 | Keys | none | Colored keys. Cleared when you enter a new floor |
-| Spells | 0 of each | `noclip`, `fireball`, `luck`, `reroll`, `invis` |
+| Spells | 0 of each | `noclip`, `fireball`, `luck`, `reroll`, `invis`. Only Wizards can cast (2.12) |
 | Dexterity (`dex`) | 1 | Added to lock-pick rolls (2.10) |
-| Sling stones (`ammo`) | 3 (`START_AMMO`) | One per shot (2.10) |
+| Sling stones (`ammo`) | 0 (`START_AMMO`) | One per Rogue shot (2.10, 2.12) |
+| Class (`cls`), `level` | `null`, 0 | The base hero. A class comes at 10 kills (2.12) |
+| `slots`, `range`, `moveBoost` | `[]`, 0, 0 | The Wizard's spell slots, and the range and move boosts (2.12) |
 | Lock picks (`lockpicks`) | 0 | Used up on every attempt (2.10) |
 | Torches (`torches`) | 0 | Carried torches (2.9) |
 
@@ -87,7 +95,7 @@ The start square is drawn as a **smiley face**. The exit is a **staircase**. Ste
 
 Every room's interior is at least **3×3**. Rooms are joined by one-square doorways in a shared wall that is one square thick.
 
-**Tutorial floors.** Floors 1–3 are hand-shaped (`tutorialLevel` in `levelgen.js`). Positions still come from the seed.
+**Tutorial floors.** The tutorial is optional and is played as "Tutorial 1/3" to "Tutorial 3/3" before the real floor 1. It doesn't count as floors: no floors cleared, no best-floor record, and no shops or dark floors. The layouts are hand-shaped (`generateTutorial(seed, t)` → `tutorialLevel` in `levelgen.js`, seeded with `seedFor(seed, 'tutorial', t)`, dice from `seedFor(seedText, 'tutorial-dice', t)`).
 
 | Floor | Map | Rooms | Contents |
 |---|---|---|---|
@@ -95,9 +103,11 @@ Every room's interior is at least **3×3**. Rooms are joined by one-square doorw
 | 2 | 13×7 | Two 5×5 rooms, joined by one doorway | The start in one room and the stairs in the other. 1–2 webs, always in the stairs room. 3 coins, 1 heart. |
 | 3 | 13×11 | A 2×2 grid of 5×4 rooms, chained start → A → B → stairs (random corner and direction) | The door into the stairs room is locked, and its key is in A. 1 enemy and 1 web, in A and B (either way round). 1 chest, 1 heart, 1 med pack, 3–4 coins. No portals. |
 
-Floor 4 onward uses the normal generator.
+Real floors 1 and up use the normal generator.
 
-**Skipping the tutorial.** `Game.create(seed, { startFloor: 4 })`, from the "Skip tutorial" checkbox on the New game screen, starts on floor 4 with the starting stats.
+**Playing or skipping it.** `Game.create(seed, { tutorial: true })` sets `s.tutorial = true` and starts on tutorial 1. Without it, the game starts on floor 1. After tutorial 3, `nextFloor()` clears `s.tutorial` and enters floor 1.
+- The New game screen has a "Play the tutorial first" checkbox. It defaults to on for a new player, and the choice is remembered (`dicedelve-tutorial-v1`).
+- Floor-based rules (shops from 5, dark floors from 6, stalkers from 12, mimics from 19) count real floors only.
 
 ### 2.4 Squares and objects
 
@@ -237,6 +247,48 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 | **Picking** | `pickLock()` rolls d20 + DEX against `LOCK_TARGET` (gold 12, crimson 14, azure 16, emerald 18) and always uses up the pick. Success opens the door and continues the move (phase back to `moving`). Failure ends the turn in front of the door. |
 | **Declining** | `declinePick()` adds the door to `declinedPicks`, so it counts as solid until the turn ends, and the slide goes on to the normal redirect. |
 | **Odds** | `rules.pickChance(dex, color)` = `clamp(21 − (target − dex), 0, 20) / 20`. With DEX 1: gold 50%, crimson 40%, azure 30%, emerald 20%. Each extra DEX adds 5%. |
+
+### 2.12 Classes and levels (experimental)
+
+**The base hero** has 7 health, STR 1 and DEX 1. It has no ranged weapon (`canShoot()` is false) and can't cast. Stones and spells it finds are kept for later.
+
+**Kills and levels.** Every kill counts, whatever the source: melee, a stalker fight, a stone or missile, or Fireball.
+- `rules.killsForLevel(n)`: level 1 needs 10 kills, and each later level needs `ceil(previous × 1.5)` more.
+- `levelThreshold(n)` is the total: 10, 25, 48, 83, 136…
+- `levelForKills(k)` turns a kill count into a level.
+- `countKill(o)` emits `levelUp` when a threshold is crossed.
+- `levelsOwed()` = `levelForKills(kills) − player.level`. While it is above 0, `roll()` refuses, and the UI opens the chooser.
+
+**Choosing a class** (level 1): `chooseClass(cls, spell?)`. The values are in `rules.CLASSES`.
+
+| Class | On choosing | Per level | Boons (`chooseBoon(id, spell?)`) |
+|---|---|---|---|
+| Fighter | +5 max health | +2 max health | `hp` (+2 max health) or `str` (+1) |
+| Wizard | 1 spell slot (the player picks its spell) and an unlimited magic missile | +1 | `slot` (another slot, pick its spell) or `range` (+1) |
+| Rogue | +2 max health, +2 DEX, 5 stones | +1 | `move` (+1) or `range` (+1) |
+
+Each level-up adds the class's per-level health, and current health goes up by the same amount.
+
+**What each class can use** (`canUse(kind)`):
+- **Spells:** only a Wizard casts. `canCast()` needs `cls === 'wizard'`, and a cast uses a ready **slot** of that spell first, then a carried charge (`spendSpell`).
+  - Slots recharge in `enterFloor`.
+  - `spellCount(name)` = charges + ready slots.
+- **Ranged:** `hasRanged()` is a Wizard (no ammo needed) or a Rogue with stones.
+- **Unusable loot is sold:**
+  - Fighters and Rogues sell spells for `spellCoinValue(f) = 2 × coinValue(f)` each (from dark chests and mimic hoards).
+  - Fighters and Wizards sell stones for 1 coin each (from bodies).
+  - Anything already held is sold when the class is chosen (`sellUnusable`).
+- **Shops:** `makeShop` offers spells only to Wizards and stones only to Rogues. The base hero gets neither.
+
+**Move boost (Rogue).** `choose()` makes the move `steps + moveBoost` long, with `move.extra = moveBoost`.
+- After any square where `stepsLeft ≤ extra` (so at least the die's value has been moved), `step()` switches the phase to `stopPrompt`.
+- `stopMove()` ends the turn there, and `continueMove()` goes on.
+- During a `redirect`, `canStop()` also allows stopping.
+
+**Range boost (Rogue and Wizard).**
+- `freeTargets()` lists enemies that are visible, within Manhattan distance `range`, and in clear line of sight (`lineOfSight`).
+- `shootAt(i)` shoots one of them directly. This works in the `choose` phase, before or after picking a die.
+- Farther enemies still need `shoot(dir)` along the die's direction type, with the die's distance.
 
 ### 2.11 Mimics
 
@@ -402,7 +454,9 @@ Neighboring rooms share a one-square wall, which gives the "graph paper" look. E
 | `choose` | Pick a die (`pickDie(i)`, required before anything below), choose a direction, Pass (only when no direction is legal), Re-roll, Dark One's Luck, Fireball, arm spells |
 | `moving` | Nothing (the UI is animating) |
 | `choose` (extra) | Shoot with the sling (`shoot(dir)`) instead of moving |
-| `redirect` | Choose a direction, Fireball, arm spells |
+| `redirect` | Choose a direction, Fireball, arm spells, `stopMove()` when `canStop()` |
+| `stopPrompt` | `stopMove()` or `continueMove()` (move boost, 2.12) |
+| `roll` (level owed) | `chooseClass()` / `chooseBoon()` first: `roll()` refuses while `levelsOwed() > 0` |
 | `pickPrompt` | `pickLock()` or `declinePick()` (a slide reached a pickable door) |
 | `levelDone` | `nextFloor()` |
 | `shop` | `buy(i)`, `gamble(w)`, `nextFloor()` |
@@ -418,21 +472,22 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
 {
   version: 1,                 // in-memory shape; only checkpoints are saved (section 6.5)
   seedText: 'moss-rune-42', seed: <uint32>,
-  floor: 1, turn: 0, floorStartTurn: 0,
+  floor: 1, tutorial: false, turn: 0, floorStartTurn: 0,
   phase: 'roll',              // see 4.5
   player: { x, y, hp, maxHp, str, coins, keys: ['gold'], webbed: false, torches: 0, ammo: 3, dex: 1, lockpicks: 0,
-            spells: { noclip, fireball, luck, reroll, invis } },
+            spells: { noclip, fireball, luck, reroll, invis },
+            cls: null|'fighter'|'wizard'|'rogue', level: 0, slots: [{ spell, ready }], range: 0, moveBoost: 0 },
   diceState: <uint32>,        // dice RNG state
   dice: [d1, d2] | null, steps: 0, parity: 'ortho'|'diag', halved: false,
   usedDirs: ['E', 'S'],       // directions taken this turn
-  move: { dir, stepsLeft } | null,
+  move: { dir, stepsLeft, extra } | null,   // extra = move boost (2.12)
   armed: { noclip: false, invis: false }, invisUsed: false,
   level: Level | null,        // null on shop floors
   shop: { floor, items: [{ id, sold }], lastGamble } | null,
   log: [{ text, kind, turn }],// newest last, capped at 60
   checkpoint: Checkpoint,     // what gets saved: start of this floor, or of the next once finished
   stats: { kills, coins, floorsCleared },
-  summary: { floor, turns, next, nextIsShop }   // set on levelDone
+  summary: { floor, tutorial, turns, next, nextTutorial, nextIsShop }   // set on levelDone
 }
 ```
 
@@ -518,13 +573,17 @@ Journal entries use the classes `log-<kind>`. Don't use a bare `<kind>`: the `sp
 Everything about a floor (layout, items, enemies, shop stock, dice) comes from the seed and the floor number. So a save stores only what carries between floors:
 
 ```js
-// Checkpoint (CHECKPOINT_VERSION = 2)
+// Checkpoint (CHECKPOINT_VERSION = 3)
 {
-  v: 2,
+  v: 3,
   seedText: 'moss-rune-42',
   floor: 7,                                   // the floor to start
-  player: { hp, maxHp, str, coins, torches, ammo, dex, lockpicks, spells: { noclip, fireball, luck, reroll, invis } },
-  // torches, ammo, dex and lockpicks are optional; older saves get 0, 3, 1 and 0
+  tutorial: false,                            // true: floor is tutorial 1-3
+  player: { hp, maxHp, str, coins, torches, ammo, dex, lockpicks, spells: { noclip, fireball, luck, reroll, invis },
+            cls, level, slots: ['fireball'], range, moveBoost },
+  // torches, ammo, dex, lockpicks and the class fields are optional; older saves get defaults (the base hero).
+  // A level must match the class (0 with no class) and can't exceed levelForKills(stats.kills).
+  // Version 2 saves load too: their floors 1-3 become tutorial floors, and later floors move up by 3.
   stats: { kills, coins, floorsCleared },     // optional; score screen only
   turn: 123                                   // optional; turn counter
 }
@@ -545,6 +604,11 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
 - an export wrapper (`{app: 'dice-delve', save}`);
 - an older version-1 full-snapshot save. That is converted to a checkpoint for its current floor, or the next floor if it was finished. A dead run is refused.
 
+**Browser storage (`ui.js`).** The autosave and the slots live in localStorage and are mirrored to IndexedDB (database `dicedelve`, store `kv`).
+- At startup, `restoreMirror()` copies the mirror back if localStorage lost a key.
+- After the first tap, the game calls `navigator.storage.persist()`. The Saves screen says whether storage is persistent.
+- Cookies were considered and rejected: they're cleared together with other site data, Safari expires script-set cookies after 7 days, each holds only about 4 KB, and Chrome doesn't store them for `file://`.
+
 **Rules for saves:**
 - **Progress inside a floor is never saved.** Loading starts the floor fresh, with the stats the player had when they entered it.
 - **Retrying is accepted.** A reloaded floor has the same layout and the same dice. On a shop floor, reloading undoes purchases along with the coins spent.
@@ -553,6 +617,18 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
 - **When something new carries between floors** (for example a new spell, or a new stat): add it to `checkpointFor`, `validateCheckpoint` and `fromSave`. If an old checkpoint can't be read the same way any more, bump `CHECKPOINT_VERSION`. For an addition, give old saves a default value instead.
 
 ## 7. UI layer (`ui.js`)
+
+**Cut-scenes (experimental).** `playEvents()` turns engine events into scenes:
+- **`kill`:** a burst and slash on the enemy's square, in the board's `.fx-layer`, using `game.lastKill`.
+- **`mimic`:** the chest or door jolts, then its jaws snap open, using `game.lastMimic`.
+- **`levelUp`:** a "LEVEL n" banner (or "CHOOSE YOUR PATH").
+- **`classChosen`:** the class emblem.
+
+The last three play one at a time in the `#scene` overlay, about 1.5 s each. Tap or Space skips a scene.
+- The level chooser waits for the queue to finish (`whenScenesDone`).
+- The scenes are turned on or off in Sound & effects (`dicedelve-fx-v1`), and are always off with `prefers-reduced-motion`.
+- `lastKill` and `lastMimic` live on the Game instance and are never saved.
+
 
 - **Saving.** `render()` draws the HUD, the board and the side panel from `game.s`. After every state change, call `render(); save();`.
 - **Moving.** `choose(dir)` is async:
@@ -691,6 +767,19 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
   - The ambush with forced dice: a passed DEX check does normal damage and a failed one double. The move stops before it, the turn ends, it's revealed with double health, and it can kill you. Invisibility slips past a hidden chest mimic.
   - Fake doors: solid without a key or a pick. A key or a pick wakes it and is kept. A dead door mimic leaves the doorway open.
   - The reward from melee (plus a body), sling and Fireball kills, and from Fireball on a hidden door mimic.
+- **Classes and levels (experimental):**
+  - The kill curve (10/25/48/83).
+  - The base hero: 7 health, and can't shoot or cast.
+  - The 10th kill owes a class, and `roll()` refuses until it's chosen. Bad choices are refused.
+  - Each class's bonuses, and unusable loot (held and found) is sold.
+  - Shops offer only usable items.
+  - Boons, and several owed levels at once.
+  - Wizard: slots are used before charges and recharge each floor, and the missile needs no stones.
+  - Move boost: the stop prompt comes only after the die's value, Stop and Keep going work, and the full move is die + boost.
+  - Range boost: Manhattan distance, line of sight, and stones needed.
+  - Version 3 checkpoints round-trip, and bad class fields are rejected. Version 2 saves convert (floors shift, a class is owed).
+  - The random-play simulation makes class and boon choices, free shots and stop or continue decisions. Half its runs start at 40 kills.
+- **Early floors:** floors 1–10 have rooms of at least 5×5, at most one lock and no portals before floor 6.
 - **Tutorial floors:** floor 1 is one 5×5 room with the stairs in the opposite corner and no obstacles. Floor 2 is two rooms with webs, none in the start room. Floor 3 is four chained rooms with a lock guarding the stairs (key reachable), plus an enemy, a web and every item, and no portal. Floor 4 uses the normal generator. `startFloor: 4` skips the tutorial.
 - **Dark floors:** the selection rules (never floors 1–5, shops or two in a row, and a sensible frequency); one torch reachable without keys outside the start room, plus one dark chest; vision radius; walls blocking light; memory; stairs staying marked; preview and fireball limited to what you can see; carried, found and shop torches; the torch resetting each floor; torches in checkpoints.
 - **Saves:** a checkpoint round-trips; a reloaded floor replays identically with the same choices; stats carry over; shop checkpoints open the shop; older saves convert; tampered checkpoints are rejected.
