@@ -230,8 +230,9 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .pad button[data-dir]:not(:disabled) { background: var(--accent); color: #fff; }
 .pad .pad-center { border-style: dashed; background: none; font-size: 24px; flex-direction: column; gap: 0; line-height: 1; }
 .pad .pad-center:disabled { opacity: 1; }
-.pad .pad-center.roll, .pad .pad-center.pass { border-style: solid; background: var(--good); color: #fff; box-shadow: var(--shadow); font-size: 15px; }
+.pad .pad-center.roll, .pad .pad-center.pass, .pad .pad-center.stop { border-style: solid; background: var(--good); color: #fff; box-shadow: var(--shadow); font-size: 15px; }
 .pad .pad-center.pass { background: var(--warn); }
+.pad .pad-center.stop { background: var(--accent); }
 .pad .pad-center.roll svg { width: 55%; height: 55%; }
 .pad .pad-center small { font-size: 12px; color: var(--muted); }
 
