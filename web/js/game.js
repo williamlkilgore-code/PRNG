@@ -2,7 +2,7 @@
  * renders `game.s`, which is plain JSON so it can be saved and restored.
  *
  * Phases: roll -> choose -> moving <-> redirect -> roll ...
- *         plus levelDone, shop and dead.
+ *         plus pickPrompt, stopPrompt, levelDone, shop and dead.
  */
 (function (root) {
   const DC = root.DC;
@@ -26,7 +26,15 @@
   };
   const SHOP_POOL = ['maxhp', 'gamble', 'noclip', 'fireball', 'luck', 'reroll', 'invis', 'torch', 'ammo', 'lockpick'];
   const SHOP_FIXED = ['heal', 'str', 'dex'];
-  const CHECKPOINT_VERSION = 2;
+  const CHECKPOINT_VERSION = 3;
+  const CLASS_IDS = ['fighter', 'wizard', 'rogue'];
+  const BOONS = {
+    hp: { name: 'Toughness', desc: `Max health +${R.BOON_HP}.` },
+    str: { name: 'Strength', desc: 'Strength +1: hit enemies harder.' },
+    slot: { name: 'Spell slot', desc: 'One more spell slot (choose its spell). Slots recharge every floor.' },
+    range: { name: 'Range', desc: 'Range +1: shoot any enemy within that many steps, in any direction.' },
+    move: { name: 'Fleet foot', desc: 'Move +1: you may slide up to 1 extra square and stop anywhere from your die onward.' },
+  };
 
   function randomSeedText() {
     const words = ['moss', 'grim', 'ember', 'vault', 'crypt', 'rune', 'bone', 'gloom', 'ash', 'iron', 'wyrm', 'hex'];
@@ -51,6 +59,7 @@
         seedText,
         seed: hashStr(seedText),
         floor: 0,
+        tutorial: false,
         turn: 0,
         phase: 'roll',
         player: {
@@ -58,6 +67,8 @@
           keys: [], webbed: false, torches: 0,
           ammo: R.START_AMMO, dex: 1, lockpicks: 0,
           spells: { noclip: 0, fireball: 0, luck: 0, reroll: 0, invis: 0 },
+          // Class and level: chosen after the first kills (see rules.js).
+          cls: null, level: 0, slots: [], range: 0, moveBoost: 0,
         },
         diceState: 0,
         dice: null, die: null, steps: 0, parity: null, halved: false,
@@ -72,14 +83,13 @@
       };
     }
 
-    // opts.startFloor (e.g. 4) skips the tutorial floors.
+    // opts.tutorial plays the 3 tutorial floors first; they don't count as floors.
     static create(seedText, opts) {
       seedText = String(seedText || '').trim() || randomSeedText();
       const g = new Game(Game.newState(seedText));
       g.log(`A new descent begins. Seed "${seedText}".`);
-      const start = opts && Number.isInteger(opts.startFloor) && opts.startFloor > 1 ? opts.startFloor : 1;
-      if (start > 1) g.log('Skipped the tutorial.');
-      g.enterFloor(start);
+      g.s.tutorial = !!(opts && opts.tutorial);
+      g.enterFloor(1);
       return g;
     }
 
@@ -87,15 +97,17 @@
      * A save is a checkpoint: the seed, the floor to start, and what carries
      * between floors. The floor itself (map, items, dice) is rebuilt from the
      * seed, so loading always starts a floor fresh. */
-    checkpointFor(floor) {
+    checkpointFor(floor, tutorial) {
       const s = this.s, p = s.player;
       return {
         v: CHECKPOINT_VERSION,
         seedText: s.seedText,
         floor,
+        tutorial: tutorial === undefined ? !!s.tutorial : tutorial,
         player: {
           hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, torches: p.torches,
           ammo: p.ammo, dex: p.dex, lockpicks: p.lockpicks, spells: Object.assign({}, p.spells),
+          cls: p.cls, level: p.level, slots: p.slots.map((sl) => sl.spell), range: p.range, moveBoost: p.moveBoost,
         },
         stats: Object.assign({}, s.stats),
         turn: s.turn,
@@ -107,7 +119,7 @@
       const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
       const obj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
       if (!obj(cp)) return 'not a save';
-      if (cp.v !== CHECKPOINT_VERSION) return 'unsupported save version';
+      if (cp.v !== CHECKPOINT_VERSION && cp.v !== 2) return 'unsupported save version';
       if (typeof cp.seedText !== 'string' || !cp.seedText.trim() || cp.seedText.length > 100) return 'bad seed';
       if (!int(cp.floor, 1, 100000)) return 'bad floor';
       const p = cp.player;
@@ -120,6 +132,18 @@
       if (p.lockpicks !== undefined && !int(p.lockpicks, 0, 10000)) return 'bad lock picks';
       if (cp.stats !== undefined && !(obj(cp.stats) && ['kills', 'coins', 'floorsCleared'].every((k) => int(cp.stats[k], 0, 1e9)))) return 'bad stats';
       if (cp.turn !== undefined && !int(cp.turn, 0, 1e9)) return 'bad turn';
+      if (cp.v === 2) return null;
+      // Version 3: tutorial floors, class and level (all optional; missing
+      // fields mean "no tutorial" and the base hero).
+      if (cp.tutorial !== undefined && (typeof cp.tutorial !== 'boolean' || (cp.tutorial && cp.floor > 3))) return 'bad tutorial';
+      const cls = p.cls === undefined ? null : p.cls, level = p.level === undefined ? 0 : p.level;
+      if (!(cls === null || CLASS_IDS.includes(cls))) return 'bad class';
+      if (!int(level, 0, 1000) || (level > 0) !== (cls !== null)) return 'bad level';
+      if (level > R.levelForKills(cp.stats ? cp.stats.kills : 0)) return 'bad level';
+      const slots = p.slots === undefined ? [] : p.slots;
+      if (!Array.isArray(slots) || slots.length > 100 || !slots.every((k) => typeof k === 'string' && SPELLS[k]) ||
+          (slots.length > 0 && cls !== 'wizard')) return 'bad spell slots';
+      if ((p.range !== undefined && !int(p.range, 0, 100)) || (p.moveBoost !== undefined && !int(p.moveBoost, 0, 100))) return 'bad boosts';
       return null;
     }
 
@@ -128,15 +152,28 @@
     static fromSave(data) {
       if (data && data.app === 'dice-delve') data = data.save || data.state;
       let cp = data;
+      if (data && data.v === 2) {
+        // Version 2 had no classes, and its floors 1-3 were the tutorial: those
+        // become tutorial floors, and later floors move up by 3.
+        const why = Game.validateCheckpoint(data);
+        if (why) return { error: why };
+        const p = data.player;
+        data = Object.assign({}, data, {
+          v: CHECKPOINT_VERSION, tutorial: data.floor <= 3, floor: data.floor <= 3 ? data.floor : data.floor - 3,
+          player: Object.assign({}, p, { cls: null, level: 0, slots: [], range: 0, moveBoost: 0 }),
+        });
+        cp = data;
+      }
       if (data && data.version === 1 && data.player) {
         // Older full-snapshot save: resume at the start of its current floor
         // (or the next one, if the floor was already finished).
         if (data.phase === 'dead') return { error: 'that run has ended' };
         const p = data.player;
+        const f = data.phase === 'levelDone' ? data.floor + 1 : data.floor;
         cp = {
           v: CHECKPOINT_VERSION, seedText: data.seedText,
-          floor: data.phase === 'levelDone' ? data.floor + 1 : data.floor,
-          player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, spells: p.spells },
+          tutorial: f <= 3, floor: f <= 3 ? f : f - 3,
+          player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, spells: p.spells, cls: null, level: 0, slots: [], range: 0, moveBoost: 0 },
           stats: data.stats, turn: data.turn,
         };
       }
@@ -150,11 +187,14 @@
         ammo: cpp.ammo === undefined ? R.START_AMMO : cpp.ammo,
         dex: cpp.dex === undefined ? 1 : cpp.dex,
         lockpicks: cpp.lockpicks || 0,
+        cls: cpp.cls || null, level: cpp.level || 0, slots: (cpp.slots || []).map((spell) => ({ spell, ready: true })),
+        range: cpp.range || 0, moveBoost: cpp.moveBoost || 0,
       });
+      s.tutorial = !!cp.tutorial;
       for (const k of Object.keys(SPELLS)) p.spells[k] = cp.player.spells[k];
       if (cp.stats) Object.assign(s.stats, { kills: cp.stats.kills, coins: cp.stats.coins, floorsCleared: cp.stats.floorsCleared });
       s.turn = cp.turn || 0;
-      g.log(`Resumed seed "${s.seedText}" at floor ${cp.floor}.`);
+      g.log(`Resumed seed "${s.seedText}" at ${cp.tutorial ? 'tutorial ' + cp.floor : 'floor ' + cp.floor}.`);
       g.enterFloor(cp.floor);
       return { game: g };
     }
@@ -240,7 +280,7 @@
     }
 
     stepsLeft() {
-      return this.s.phase === 'redirect' || this.s.phase === 'moving' ? this.s.move.stepsLeft : this.s.steps;
+      return ['redirect', 'moving', 'stopPrompt', 'pickPrompt'].includes(this.s.phase) && this.s.move ? this.s.move.stepsLeft : this.s.steps;
     }
 
     // Directions the player may pick right now.
@@ -286,9 +326,17 @@
       p.keys = []; p.webbed = false;
       s.floorStartTurn = s.turn;
       // Dice restart per floor, so a floor replays identically from its checkpoint.
-      s.diceState = seedFor(s.seedText, 'dice', f);
+      s.diceState = s.tutorial ? seedFor(s.seedText, 'tutorial-dice', f) : seedFor(s.seedText, 'dice', f);
       s.checkpoint = this.checkpointFor(f);
-      if (R.isShopFloor(s.seed, f)) {
+      p.slots.forEach((sl) => { sl.ready = true; }); // spell slots recharge every floor
+      if (s.tutorial) {
+        s.shop = null;
+        s.level = DC.generateTutorial(s.seed, f);
+        p.x = s.level.start.x; p.y = s.level.start.y;
+        s.level.trail = [[[p.x, p.y]]];
+        s.phase = 'roll';
+        this.log(`Tutorial ${f} of 3. Find the staircase.`, 'floor');
+      } else if (R.isShopFloor(s.seed, f)) {
         s.level = null;
         s.shop = this.makeShop(f);
         s.phase = 'shop';
@@ -369,14 +417,23 @@
       s.stats.floorsCleared++;
       s.phase = 'levelDone';
       this.emit('stairs');
-      s.summary = { floor: s.floor, turns: s.turn - s.floorStartTurn, next: s.floor + 1, nextIsShop: R.isShopFloor(s.seed, s.floor + 1) };
-      s.checkpoint = this.checkpointFor(s.floor + 1);
-      this.log(`You descend the stairs of floor ${s.floor}!`, 'floor');
+      const lastTut = s.tutorial && s.floor >= 3;
+      const next = lastTut ? 1 : s.floor + 1, nextTut = s.tutorial && !lastTut;
+      s.summary = { floor: s.floor, tutorial: s.tutorial, turns: s.turn - s.floorStartTurn, next, nextTutorial: nextTut,
+        nextIsShop: !nextTut && R.isShopFloor(s.seed, next) };
+      if (s.tutorial) s.stats.floorsCleared--; // the tutorial doesn't count
+      s.checkpoint = this.checkpointFor(next, nextTut);
+      this.log(s.tutorial ? `Tutorial ${s.floor} complete!` : `You descend the stairs of floor ${s.floor}!`, 'floor');
     }
 
     nextFloor() {
-      if (this.s.phase !== 'levelDone' && this.s.phase !== 'shop') return false;
-      this.enterFloor(this.s.floor + 1);
+      const s = this.s;
+      if (s.phase !== 'levelDone' && s.phase !== 'shop') return false;
+      if (s.tutorial && s.floor >= 3) {
+        s.tutorial = false;
+        this.log('The tutorial is over. The real descent begins.', 'floor');
+        this.enterFloor(1);
+      } else this.enterFloor(s.floor + 1);
       return true;
     }
 
@@ -404,7 +461,7 @@
 
     roll() {
       const s = this.s, p = s.player;
-      if (s.phase !== 'roll') return false;
+      if (s.phase !== 'roll' || this.levelsOwed() > 0) return false;
       s.dice = [this.d(6), this.d(6)];
       s.die = null;
       this.emit('roll');
@@ -421,8 +478,12 @@
     choose(dir) {
       const s = this.s;
       if (!this.availableDirs().includes(dir)) return false;
-      if (s.phase === 'choose') s.move = { stepsLeft: s.steps, dir };
-      else s.move.dir = dir;
+      if (s.phase === 'choose') {
+        // Rogue's move boost: up to `extra` more squares, stopping any time
+        // once the die's value has been moved.
+        const extra = s.player.cls === 'rogue' ? s.player.moveBoost : 0;
+        s.move = { stepsLeft: s.steps + extra, dir, extra };
+      } else s.move.dir = dir;
       s.usedDirs.push(dir);
       s.phase = 'moving';
       return true;
@@ -436,7 +497,7 @@
 
     finishTurnFlags() {
       const s = this.s;
-      if (s.invisUsed) { s.player.spells.invis--; this.log('Your invisibility fades.', 'spell'); }
+      if (s.invisUsed) { this.spendSpell('invis'); this.log('Your invisibility fades.', 'spell'); }
       s.armed = { noclip: false, invis: false };
       s.invisUsed = false;
       s.move = null;
@@ -469,8 +530,33 @@
     }
 
     /* Advance the current move by one step. Returns an event for the UI:
-     * step | teleport | redirect | fight | web | stairs | end | dead | idle */
+     * step | teleport | redirect | fight | web | stairs | end | dead | idle | pick
+     * With a move boost, the slide pauses (phase 'stopPrompt') on each square
+     * where stopping is allowed. */
     step() {
+      const ev = this.stepOnce(), s = this.s;
+      if (s.phase === 'moving' && this.canStop()) s.phase = 'stopPrompt';
+      return ev;
+    }
+
+    // Stopping early is allowed once the die's value has been moved.
+    canStop() {
+      const m = this.s.move;
+      return !!(m && m.extra && m.stepsLeft > 0 && m.stepsLeft <= m.extra &&
+        ['moving', 'stopPrompt', 'redirect'].includes(this.s.phase));
+    }
+    stopMove() {
+      if (!this.canStop() || this.s.phase === 'moving') return false;
+      this.endTurn('You stop here.');
+      return true;
+    }
+    continueMove() {
+      if (this.s.phase !== 'stopPrompt') return false;
+      this.s.phase = 'moving';
+      return true;
+    }
+
+    stepOnce() {
       const s = this.s, p = s.player, m = s.move, L = s.level;
       if (s.phase !== 'moving') return { type: 'idle' };
       if (m.stepsLeft <= 0) { this.endTurn(); return { type: 'end' }; }
@@ -499,7 +585,7 @@
         for (let k = 1; k <= lm.walls; k++) this.moveTo(p.x + dx, p.y + dy);
         m.stepsLeft -= lm.walls;
         s.armed.noclip = false;
-        p.spells.noclip--;
+        this.spendSpell('noclip');
         this.emit('spell');
         this.log('You phase straight through the wall!', 'spell');
       }
@@ -566,15 +652,20 @@
             const kinds = Object.keys(SPELLS);
             const spell = kinds[this.d(kinds.length) - 1];
             this.gainCoins(v);
-            p.spells[spell]++;
             this.clearObj(o);
-            this.log(`Dark chest! ${v} coins and a ${SPELLS[spell].name} spell.`, 'good');
+            this.log(`Dark chest! ${v} coins and ${this.gainSpell(spell)}.`, 'good');
             break;
           }
           case 'body':
-            p.ammo += o.ammo;
             this.clearObj(o);
-            this.log(`You gather ${o.ammo} sling stone${o.ammo > 1 ? 's' : ''} from the body.`, 'good');
+            if (this.canUse('ammo')) {
+              p.ammo += o.ammo;
+              this.log(`You gather ${o.ammo} sling stone${o.ammo > 1 ? 's' : ''} from the body.`, 'good');
+            } else {
+              const v = o.ammo * R.STONE_COINS;
+              this.gainCoins(v);
+              this.log(`You sell the body's ${o.ammo} stone${o.ammo > 1 ? 's' : ''} for ${v} coin${v > 1 ? 's' : ''}.`, 'good');
+            }
             break;
           case 'lockpick':
             p.lockpicks++;
@@ -651,7 +742,7 @@
     killEnemy(o, dropBody) {
       const L = this.s.level;
       this.clearObj(o);
-      this.s.stats.kills++;
+      this.countKill();
       if (o.mimic) this.mimicReward(o);
       if (!dropBody) return;
       const body = { type: 'body', x: o.x, y: o.y, ammo: this.d(2) };
@@ -691,15 +782,113 @@
       const kinds = Object.keys(SPELLS);
       const spell = kinds[this.d(kinds.length) - 1];
       this.gainCoins(v);
-      s.player.spells[spell]++;
       this.emit('chest');
-      this.log(`The mimic's hoard: ${v} coins and a ${SPELLS[spell].name} spell!`, 'good');
+      this.log(`The mimic's hoard: ${v} coins and ${this.gainSpell(spell)}!`, 'good');
+    }
+
+    // ---------------------------------------------------------- class & level
+    countKill() {
+      const s = this.s;
+      s.stats.kills++;
+      if (R.levelForKills(s.stats.kills) > R.levelForKills(s.stats.kills - 1)) {
+        this.emit('levelUp');
+        this.log(s.player.cls ? 'Level up! Choose a boon.' : 'You feel stronger. Time to choose your path!', 'good');
+      }
+    }
+    // Levels earned by kills but not yet chosen. Rolling waits until they are.
+    levelsOwed() {
+      return Math.max(0, R.levelForKills(this.s.stats.kills) - this.s.player.level);
+    }
+    // Can the current class use this kind of loot? The base hero keeps
+    // everything for later; a class sells what it can't use.
+    canUse(kind) {
+      const c = this.s.player.cls;
+      if (!c) return true;
+      if (kind === 'ammo') return c === 'rogue';
+      if (kind === 'spell') return c === 'wizard';
+      return true;
+    }
+    gainSpell(spell) {
+      const s = this.s;
+      if (this.canUse('spell')) { s.player.spells[spell]++; return `a ${SPELLS[spell].name} spell`; }
+      const v = R.spellCoinValue(s.floor);
+      this.gainCoins(v);
+      return `a ${SPELLS[spell].name} scroll you sell for ${v} coins`;
+    }
+    // Turn anything the new class can't use into coins.
+    sellUnusable() {
+      const s = this.s, p = s.player;
+      let v = 0;
+      if (!this.canUse('ammo') && p.ammo) { v += p.ammo * R.STONE_COINS; p.ammo = 0; }
+      if (!this.canUse('spell')) {
+        for (const k of Object.keys(SPELLS)) { v += p.spells[k] * R.spellCoinValue(s.floor); p.spells[k] = 0; }
+      }
+      if (v) { this.gainCoins(v); this.log(`You sell gear your class can't use for ${v} coins.`, 'good'); }
+    }
+
+    chooseClass(cls, spell) {
+      const s = this.s, p = s.player, C = R.CLASSES[cls];
+      if (p.cls || !C || this.levelsOwed() < 1) return false;
+      if (cls === 'wizard' && !SPELLS[spell]) return false;
+      p.cls = cls; p.level = 1;
+      p.maxHp += C.hp; p.hp += C.hp;
+      p.dex += C.dex;
+      p.ammo += C.ammo;
+      if (cls === 'wizard') p.slots = [{ spell, ready: true }];
+      this.sellUnusable();
+      this.emit('classChosen');
+      this.log(`You are now a ${C.name}!`, 'good');
+      return true;
+    }
+
+    boonChoices() {
+      const c = this.s.player.cls;
+      return c ? R.CLASSES[c].boons : [];
+    }
+
+    chooseBoon(id, spell) {
+      const s = this.s, p = s.player;
+      if (!p.cls || this.levelsOwed() < 1 || !this.boonChoices().includes(id)) return false;
+      if (id === 'slot' && !SPELLS[spell]) return false;
+      const gain = R.CLASSES[p.cls].levelHp;
+      p.level++;
+      p.maxHp += gain; p.hp = Math.min(p.maxHp, p.hp + gain);
+      switch (id) {
+        case 'hp': p.maxHp += R.BOON_HP; p.hp += R.BOON_HP; break;
+        case 'str': p.str++; break;
+        case 'slot': p.slots.push({ spell, ready: true }); break;
+        case 'range': p.range++; break;
+        case 'move': p.moveBoost++; break;
+      }
+      this.log(`Level ${p.level}! Max health +${gain}, ${BOONS[id].name.toLowerCase()}${id === 'slot' ? ` (${SPELLS[spell].name})` : ''}.`, 'good');
+      return true;
     }
 
     // ------------------------------------------------------------------ sling
+    // Rogues shoot sling stones; Wizards cast an unlimited magic missile.
+    hasRanged() {
+      const p = this.s.player;
+      return p.cls === 'wizard' || (p.cls === 'rogue' && p.ammo > 0);
+    }
     canShoot() {
       const s = this.s;
-      return !!(s.level && s.phase === 'choose' && s.die !== null && s.player.ammo > 0);
+      return !!(s.level && s.phase === 'choose' && s.die !== null && this.hasRanged());
+    }
+    // Range boost: any visible enemy within `range` steps (|dx| + |dy|) with a
+    // clear line of sight can be shot directly, whatever the dice say.
+    freeTargets() {
+      const s = this.s, p = s.player, L = s.level;
+      if (!L || s.phase !== 'choose' || !p.range || !this.hasRanged()) return [];
+      return L.objects.map((o, i) => i).filter((i) => {
+        const o = L.objects[i];
+        return o.type === 'enemy' && !o.done && Math.abs(o.x - p.x) + Math.abs(o.y - p.y) <= p.range &&
+          this.isVisible(o.x, o.y) && this.lineOfSight(p.x, p.y, o.x, o.y);
+      });
+    }
+    shootAt(index) {
+      if (!this.freeTargets().includes(index)) return null;
+      const t = this.s.level.objects[index], p = this.s.player;
+      return this.fire([[t.x, t.y]], t, [p.x, p.y]);
     }
 
     // Directions of the roll's type with at least one open square to fly through.
@@ -729,22 +918,27 @@
 
     // Shoot instead of moving: 1 damage to the first enemy in line; ends the turn.
     shoot(dir) {
-      const s = this.s, p = s.player;
       if (!this.shotDirs().includes(dir)) return null;
       const { cells, target } = this.shotPath(dir);
-      p.ammo--;
+      return this.fire(cells, target);
+    }
+
+    fire(cells, target, from) {
+      const s = this.s, p = s.player, wizard = p.cls === 'wizard';
+      const what = wizard ? 'magic missile' : 'sling stone';
+      if (!wizard) p.ammo--;
       this.emit('shoot');
       this.emit(!target ? 'miss' : target.hp <= 1 ? 'kill' : 'hit');
       if (target) {
         target.hp -= 1;
-        const name = target.stalker ? 'stalker' : 'enemy';
-        if (target.hp <= 0) { this.killEnemy(target, true); this.log(`Your sling stone fells the ${name}!`, 'fight'); }
-        else this.log(`Your sling stone hits the ${name} (${target.hp}/${target.maxHp} left).`, 'fight');
+        const name = target.mimic ? 'mimic' : target.stalker ? 'stalker' : 'enemy';
+        if (target.hp <= 0) { this.killEnemy(target, true); this.log(`Your ${what} fells the ${name}!`, 'fight'); }
+        else this.log(`Your ${what} hits the ${name} (${target.hp}/${target.maxHp} left).`, 'fight');
       } else {
-        this.log('Your sling stone clatters off the wall.', 'info');
+        this.log(wizard ? 'Your magic missile fizzles against the wall.' : 'Your sling stone clatters off the wall.', 'info');
       }
       this.endTurn();
-      return { cells, hit: !!target };
+      return { cells, hit: !!target, from: from || null };
     }
 
     // --------------------------------------------------------------- stalkers
@@ -841,9 +1035,22 @@
     }
 
     // ----------------------------------------------------------------- spells
+    // Ready slots plus carried charges. Only Wizards can cast.
+    spellCount(name) {
+      const p = this.s.player;
+      return p.spells[name] + p.slots.filter((sl) => sl.spell === name && sl.ready).length;
+    }
+    // A cast uses a ready slot first, then a carried charge.
+    spendSpell(name) {
+      const p = this.s.player;
+      const sl = p.slots.find((x) => x.spell === name && x.ready);
+      if (sl) sl.ready = false;
+      else if (p.spells[name] > 0) p.spells[name]--;
+    }
+
     canCast(name) {
       const s = this.s;
-      if (!s.level || !(s.player.spells[name] > 0)) return false;
+      if (!s.level || s.player.cls !== 'wizard' || !(this.spellCount(name) > 0)) return false;
       switch (name) {
         case 'reroll': case 'luck': return s.phase === 'choose';
         case 'noclip': case 'invis': return s.phase === 'choose' || s.phase === 'redirect' || s.phase === 'roll';
@@ -857,7 +1064,7 @@
       if (!this.canCast('reroll') || (i !== 0 && i !== 1)) return false;
       const old = s.dice[i];
       s.dice[i] = this.d(6);
-      s.player.spells.reroll--;
+      this.spendSpell('reroll');
       this.computeSteps();
       this.emit('roll');
       this.log(`Re-roll: die ${i + 1} ${old} → ${s.dice[i]}.${this.dieSummary()}`, 'spell');
@@ -874,7 +1081,7 @@
       const ok = (v) => Number.isInteger(v) && v >= 1 && v <= 6;
       if (!this.canCast('luck') || !ok(a) || !ok(b)) return false;
       s.dice = [a, b];
-      s.player.spells.luck--;
+      this.spendSpell('luck');
       this.computeSteps();
       this.emit('spell');
       this.log(`Dark One's Luck bends fate: ${a} and ${b}.${this.dieSummary()}`, 'spell');
@@ -912,8 +1119,8 @@
       const o = s.level.objects[index];
       this.clearObj(o);
       o.burned = true;
-      s.player.spells.fireball--;
-      if (o.type === 'enemy' || o.mimic) s.stats.kills++; // no body: nothing left to loot
+      this.spendSpell('fireball');
+      if (o.type === 'enemy' || o.mimic) this.countKill(); // no body: nothing left to loot
       if (o.mimic) this.mimicReward(o);
       this.updateVision(); // a burned door can open a line of sight
       const what = o.type === 'lock' ? `the ${o.color} door` : o.type === 'web' ? 'a web' : 'an enemy';
@@ -925,7 +1132,11 @@
     // ------------------------------------------------------------------- shop
     makeShop(f) {
       const rng = new RNG(seedFor(this.s.seed, 'shop', f));
-      const random = rng.shuffle(SHOP_POOL.slice()).slice(0, 4);
+      // Only offers the current class can use (no spells unless Wizard, no
+      // stones unless Rogue).
+      const cls = this.s.player.cls;
+      const pool = SHOP_POOL.filter((id) => (SPELLS[id] ? cls === 'wizard' : id === 'ammo' ? cls === 'rogue' : true));
+      const random = rng.shuffle(pool).slice(0, 4);
       return { floor: f, items: [...SHOP_FIXED, ...random].map((id) => ({ id, sold: false })), lastGamble: null };
     }
 
@@ -1006,4 +1217,6 @@
   DC.ORTHO = ORTHO;
   DC.DIAG = DIAG;
   DC.SPELLS = SPELLS;
+  DC.BOONS = BOONS;
+  DC.CLASS_IDS = CLASS_IDS;
 })(typeof window !== 'undefined' ? window : globalThis);

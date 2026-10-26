@@ -15,22 +15,25 @@
   const PORTAL_COLORS = ['violet', 'teal'];
   const D4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
-  function splitRegions(rng, w, h) {
+  // Binary space partition. `m` is the smallest room interior (3, or 5 on
+  // the simpler early floors).
+  function splitRegions(rng, w, h, m) {
+    m = m || 3;
     const leaves = [];
     (function split(r) {
       const iw = r.x1 - r.x0 - 1, ih = r.y1 - r.y0 - 1;
-      const canV = iw >= 7, canH = ih >= 7;
-      const big = iw > 8 || ih > 7;
+      const canV = iw >= 2 * m + 1, canH = ih >= 2 * m + 1;
+      const big = iw > 3 * m - 1 || ih > 3 * m - 2;
       if ((!canV && !canH) || (!big && rng.chance(0.45))) { leaves.push(r); return; }
       let vertical;
       if (canV && canH) vertical = iw > ih ? rng.chance(0.75) : iw < ih ? rng.chance(0.25) : rng.chance(0.5);
       else vertical = canV;
       if (vertical) {
-        const s = rng.int(r.x0 + 4, r.x1 - 4);
+        const s = rng.int(r.x0 + m + 1, r.x1 - m - 1);
         split({ x0: r.x0, y0: r.y0, x1: s, y1: r.y1 });
         split({ x0: s, y0: r.y0, x1: r.x1, y1: r.y1 });
       } else {
-        const s = rng.int(r.y0 + 4, r.y1 - 4);
+        const s = rng.int(r.y0 + m + 1, r.y1 - m - 1);
         split({ x0: r.x0, y0: r.y0, x1: r.x1, y1: s });
         split({ x0: r.x0, y0: s, x1: r.x1, y1: r.y1 });
       }
@@ -80,7 +83,9 @@
   }
 
   function tryGenerate(rng, floor, w, h, seed) {
-    const rooms = splitRegions(rng, w, h);
+    const R = DC.rules;
+    const early = floor <= R.EARLY_FLOORS;
+    const rooms = splitRegions(rng, w, h, early ? 5 : 3);
     if (rooms.length < 3) return null;
     const tiles = new Array(w * h).fill(0);
     const roomOf = new Array(w * h).fill(-1);
@@ -99,7 +104,7 @@
       const ra = find(e.a), rb = find(e.b);
       const tree = ra !== rb;
       if (tree) parent[ra] = rb;
-      if (!tree && !rng.chance(0.2)) continue;
+      if (!tree && !rng.chance(early ? 0.4 : 0.2)) continue;
       const [x, y] = rng.pick(e.cells);
       tiles[y * w + x] = 2;
       doorways.push({ x, y });
@@ -136,7 +141,7 @@
 
     // Locked doors: only accepted where they actually cut part of the map off,
     // and only while the start zone keeps room for keys.
-    const wantLocks = floor === 1 ? 0 : rng.int(floor < 4 ? 0 : 1, Math.min(3, 1 + Math.floor(floor / 8)));
+    const wantLocks = floor === 1 ? 0 : early ? rng.int(floor < 4 ? 0 : 1, 1) : rng.int(1, Math.min(3, 1 + Math.floor(floor / 8)));
     const locked = new Set();
     const lockList = [];
     let zone = reach(L, sx, sy, locked);
@@ -197,7 +202,7 @@
 
     // Portals: always in pairs, both ends inside the same locked-door zone so
     // they never bypass a lock.
-    const wantPairs = floor >= 4 && rng.chance(0.4) ? (floor >= 15 && rng.chance(0.4) ? 2 : 1) : 0;
+    const wantPairs = floor >= R.PORTALS_FROM && rng.chance(0.4) ? (floor >= 15 && rng.chance(0.4) ? 2 : 1) : 0;
     if (wantPairs) {
       const comps = [];
       const mark = new Uint8Array(w * h);
@@ -239,7 +244,6 @@
         L.objects.push(Object.assign({ type, x: c[0], y: c[1] }, extra && extra()));
       }
     };
-    const R = DC.rules;
     place('coin', rng.int(4, 7), allFloor);
     place('chest', rng.int(floor < 3 ? 0 : 1, 1 + Math.min(2, Math.floor(floor / 10))), allFloor);
     place('heart', rng.int(1, 2), allFloor);
@@ -281,7 +285,7 @@
     return L;
   }
 
-  /* Tutorial floors 1-3: small hand-shaped layouts that introduce one idea
+  /* Tutorial floors 1-3 (before the real floor 1): small hand-shaped layouts that introduce one idea
    * at a time. Positions still come from the seeded rng.
    *   1: one 5x5 room, coins only.
    *   2: two 5x5 rooms and a doorway; webs.
@@ -361,9 +365,15 @@
     return L;
   }
 
+  // Tutorial floor t (1-3); it doesn't count as a real floor.
+  function generateTutorial(seed, t) {
+    const L = tutorialLevel(new RNG(seedFor(seed, 'tutorial', t)), t);
+    L.tutorial = true;
+    return L;
+  }
+
   function generateLevel(seed, floor) {
     const rng = new RNG(seedFor(seed, 'floor', floor));
-    if (floor <= 3) return tutorialLevel(rng, floor);
     // Floors grow from 17x13 up to a cap of 21x15 (fits phone screens).
     const w = 17 + 2 * Math.min(2, Math.floor((floor - 1) / 3));
     const h = 13 + 2 * Math.min(1, Math.floor((floor - 1) / 4));
@@ -375,6 +385,7 @@
   }
 
   DC.generateLevel = generateLevel;
+  DC.generateTutorial = generateTutorial;
   DC.reach = reach;
   DC.KEY_COLORS = KEY_COLORS;
 })(typeof window !== 'undefined' ? window : globalThis);

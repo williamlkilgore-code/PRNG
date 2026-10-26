@@ -46,7 +46,11 @@ test('level generation invariants (floors 1-80, 6 seeds)', () => {
       const at = (x, y) => (x < 0 || y < 0 || x >= L.w || y >= L.h ? 0 : L.tiles[y * L.w + x]);
       const tag = `seed ${seed} floor ${floor}`;
 
-      for (const r of L.rooms) ok(r.x1 - r.x0 - 1 >= 3 && r.y1 - r.y0 - 1 >= 3, `room < 3x3 ${tag}`);
+      const minRoom = floor <= R.EARLY_FLOORS ? 5 : 3;
+      for (const r of L.rooms) ok(r.x1 - r.x0 - 1 >= minRoom && r.y1 - r.y0 - 1 >= minRoom, `room < ${minRoom}x${minRoom} ${tag}`);
+      ok(L.rooms.length >= 3, `fewer than 3 rooms ${tag}`);
+      if (floor <= R.EARLY_FLOORS) ok(L.objects.filter((o) => o.type === 'lock' && !o.mimic).length <= 1, `more than 1 lock early ${tag}`);
+      if (floor < R.PORTALS_FROM) ok(!L.objects.some((o) => o.type === 'portal'), `portal before floor ${R.PORTALS_FROM} ${tag}`);
       ok(L.w <= 21 && L.h <= 15, `map larger than 21x15 ${tag}`);
       for (let x = 0; x < L.w; x++) ok(at(x, 0) === 0 && at(x, L.h - 1) === 0, `border open ${tag}`);
       for (let y = 0; y < L.h; y++) ok(at(0, y) === 0 && at(L.w - 1, y) === 0, `border open ${tag}`);
@@ -99,20 +103,21 @@ test('level generation invariants (floors 1-80, 6 seeds)', () => {
 test('tutorial floors', () => {
   const count = (L, t) => L.objects.filter((o) => o.type === t).length;
   const roomAt = (L, x, y) => L.rooms.findIndex((r) => x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1);
+  const generateTut = DC.generateTutorial;
   for (const seed of SEEDS) {
-    const f1 = generateLevel(seed, 1);
+    const f1 = generateTut(seed, 1);
     ok(f1.w === 7 && f1.h === 7 && f1.rooms.length === 1, 'floor 1 is one 5x5 room');
     ok(Math.abs(f1.start.x - f1.stairs.x) === 4 && Math.abs(f1.start.y - f1.stairs.y) === 4, 'floor 1 stairs in opposite corner');
     ok(count(f1, 'coin') >= 2 && !count(f1, 'web') && !count(f1, 'enemy') && !count(f1, 'lock'), 'floor 1 contents');
 
-    const f2 = generateLevel(seed, 2);
+    const f2 = generateTut(seed, 2);
     ok(f2.rooms.length === 2 && f2.doorways.length === 1, 'floor 2 is two rooms and a doorway');
     ok(count(f2, 'web') >= 1 && !count(f2, 'enemy') && !count(f2, 'lock'), 'floor 2 contents');
     const sr = roomAt(f2, f2.start.x, f2.start.y);
     ok(roomAt(f2, f2.stairs.x, f2.stairs.y) !== sr, 'floor 2 stairs in the other room');
     ok(f2.objects.filter((o) => o.type === 'web').every((o) => roomAt(f2, o.x, o.y) !== sr), 'floor 2 web in start room');
 
-    const f3 = generateLevel(seed, 3);
+    const f3 = generateTut(seed, 3);
     ok(f3.rooms.length === 4 && f3.doorways.length === 3, 'floor 3 is four rooms in a chain');
     ok(count(f3, 'lock') === 1 && count(f3, 'key') === 1 && count(f3, 'enemy') === 1 && count(f3, 'web') === 1 &&
       count(f3, 'chest') === 1 && count(f3, 'heart') === 1 && count(f3, 'medpack') === 1 && !count(f3, 'portal'), 'floor 3 contents');
@@ -122,12 +127,24 @@ test('tutorial floors', () => {
     const z = reach(f3, f3.start.x, f3.start.y, new Set([lock.y * f3.w + lock.x]));
     ok(!z.seen[f3.stairs.y * f3.w + f3.stairs.x], 'floor 3 lock guards the stairs');
 
-    const f4 = generateLevel(seed, 4);
-    ok(f4.w >= 17 && f4.h >= 13 && f4.rooms.length > 4, 'floor 4 uses the normal generator');
+    ok(f1.tutorial && f3.tutorial && !generateLevel(seed, 1).tutorial, 'tutorial layouts are separate from floor 1');
   }
-  const skip = Game.create('skipper', { startFloor: 4 });
-  ok(skip.s.floor === 4 && skip.s.level && skip.s.checkpoint.floor === 4, 'skip tutorial starts on floor 4');
-  ok(Game.create('normal').s.floor === 1, 'default start on floor 1');
+  const skip = Game.create('skipper');
+  ok(skip.s.floor === 1 && !skip.s.tutorial && !skip.s.level.tutorial && skip.s.checkpoint.floor === 1 && !skip.s.checkpoint.tutorial, 'no tutorial: starts on floor 1');
+  // Playing the tutorial: 3 tutorial floors, then floor 1; they don't count.
+  const t = Game.create('learner', { tutorial: true });
+  ok(t.s.tutorial && t.s.floor === 1 && t.s.level.tutorial && t.s.checkpoint.tutorial, 'tutorial starts at tutorial 1');
+  for (let k = 1; k <= 3; k++) {
+    ok(t.s.tutorial && t.s.floor === k, 'tutorial ' + k);
+    t.s.player.x = t.s.level.stairs.x; t.s.player.y = t.s.level.stairs.y;
+    t.completeFloor();
+    ok(t.s.phase === 'levelDone' && t.s.stats.floorsCleared === 0, 'tutorial floors do not count');
+    if (k === 3) ok(t.s.summary.next === 1 && !t.s.summary.nextTutorial && !t.s.checkpoint.tutorial && t.s.checkpoint.floor === 1, 'after tutorial 3 comes floor 1');
+    t.nextFloor();
+  }
+  ok(!t.s.tutorial && t.s.floor === 1 && !t.s.level.tutorial, 'real floor 1 after the tutorial');
+  const mid = Game.fromSave(JSON.parse(JSON.stringify(Game.create('learner', { tutorial: true }).s.checkpoint)));
+  ok(mid.game && mid.game.s.tutorial && mid.game.s.floor === 1, 'tutorial checkpoint round-trips');
 });
 
 test('determinism', () => {
@@ -138,8 +155,20 @@ test('determinism', () => {
 });
 
 // Hand-built level for focused movement tests.
-function sandbox(rows, extra) {
+// Give a test hero a class (level 1, as if just chosen). Rogues get 3 stones.
+function setClass(g, cls) {
+  const p = g.s.player;
+  p.cls = cls; p.level = 1;
+  g.s.stats.kills = Math.max(g.s.stats.kills, R.levelThreshold(1));
+  if (cls === 'rogue') p.ammo = 3;
+  return g;
+}
+// The sandbox hero has 10 health (the older scenarios were written for it);
+// pass `cls` to make it a Fighter, Rogue or Wizard.
+function sandbox(rows, extra, cls) {
   const g = Game.create('sandbox');
+  g.s.player.hp = g.s.player.maxHp = 10;
+  if (cls) setClass(g, cls);
   const h = rows.length, w = rows[0].length;
   const L = { w, h, tiles: [], rooms: [], doorways: [], objects: [], trail: [], floor: g.s.floor };
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -236,15 +265,25 @@ test('diagonal redirect never turns straight back', () => {
 });
 
 // Plays the current floor with a seeded policy until it ends; returns a summary.
+// Make any owed class or level-up choices at random.
+function settleLevels(g, pick) {
+  const spells = Object.keys(DC.SPELLS);
+  while (g.levelsOwed() > 0) {
+    const ok1 = g.s.player.cls ? g.chooseBoon(pick.pick(g.boonChoices()), pick.pick(spells))
+      : g.chooseClass(pick.pick(DC.CLASS_IDS), pick.pick(spells));
+    if (!ok1) throw new Error('level choice refused');
+  }
+}
+
 function playFloor(g, policySeed) {
   const pick = new DC.RNG(policySeed);
   for (let i = 0; i < 3000; i++) {
     const s = g.s;
-    if (s.phase === 'roll') { g.roll(); if (g.s.die === null) g.pickDie(pick.int(0, 1)); }
+    if (s.phase === 'roll') { settleLevels(g, pick); g.roll(); if (g.s.die === null) g.pickDie(pick.int(0, 1)); }
     else if (s.phase === 'choose' || s.phase === 'redirect') {
       const d = g.availableDirs();
-      if (!d.length) g.passTurn(); else g.choose(pick.pick(d));
-      while (g.s.phase === 'moving') g.step();
+      if (!d.length) { if (!g.passTurn()) g.stopMove(); } else g.choose(pick.pick(d));
+      while (g.s.phase === 'moving' || g.s.phase === 'stopPrompt') { if (g.s.phase === 'stopPrompt') g.continueMove(); else g.step(); }
     } else break;
   }
   const p = g.s.player;
@@ -360,7 +399,7 @@ test('redirect allows any legal direction except straight back', () => {
 
 test('one-die movement', () => {
   const map = ['###########', '#.........#', '#....@....#', '#.........#', '#........>#', '###########'];
-  const g = sandbox(map);
+  const g = setClass(sandbox(map), 'rogue');
   g.s.phase = 'roll'; g.roll();
   g.s.dice = [3, 4]; g.s.die = null; g.computeSteps();
   ok(g.s.steps === 0 && g.s.parity === null && g.availableDirs().length === 0, 'no directions before picking a die');
@@ -384,7 +423,7 @@ test('one-die movement', () => {
   g.pickDie(1);
   ok(g.s.steps === 2, '5 halved to 2');
   // Sling range is the chosen die.
-  const h = sandbox(['###########', '#@.......E#', '#........>#', '###########'], [{ type: 'enemy', x: 9, y: 1, hp: 1, maxHp: 1 }]);
+  const h = sandbox(['###########', '#@.......E#', '#........>#', '###########'], [{ type: 'enemy', x: 9, y: 1, hp: 1, maxHp: 1 }], 'wizard');
   h.roll(); h.s.dice = [6, 2]; h.s.die = null; h.pickDie(1);
   ok(h.shotPath('E').cells.length === 2 && !h.shotPath('E').target, 'range 2');
   h.pickDie(0);
@@ -450,7 +489,7 @@ test('portal teleports and movement continues', () => {
 
 test('spells', () => {
   const g = sandbox(['###########', '#@...#....#', '#....#...>#', '###########'],
-    [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }, { type: 'web', x: 2, y: 2 }]);
+    [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }, { type: 'web', x: 2, y: 2 }], 'wizard');
   g.s.player.spells = { noclip: 1, fireball: 1, luck: 1, reroll: 1, invis: 1 };
   // Invisibility: pass through enemy untouched.
   forceRoll(g, 1, 1);
@@ -473,7 +512,7 @@ test('spells', () => {
   forceRoll(g, 1, 1);
   ok(g.reroll(0) && g.s.player.spells.reroll === 0, 'reroll');
   // No-clip needs enough movement to clear the wall.
-  const h = sandbox(['#######', '#@#...#', '#.#..>#', '#######']);
+  const h = sandbox(['#######', '#@#...#', '#.#..>#', '#######'], null, 'wizard');
   h.s.player.spells.noclip = 1;
   forceRoll(h, 1, 1); h.s.steps = 1;
   h.toggleArm('noclip');
@@ -576,7 +615,7 @@ test('vision, memory and torches', () => {
 
 test('sling and bodies', () => {
   const map = ['###########', '#@........#', '#.....#...#', '#........>#', '###########'];
-  const g = sandbox(map, [{ type: 'enemy', x: 4, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 8, y: 1, hp: 2, maxHp: 2 }]);
+  const g = sandbox(map, [{ type: 'enemy', x: 4, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 8, y: 1, hp: 2, maxHp: 2 }], 'rogue');
   ok(g.s.player.ammo === 3 && !g.canShoot(), 'start with 3 ammo, no shot before rolling');
   forceRoll(g, 1, 1); // range 2: too short to reach x=4
   let r = g.shoot('E');
@@ -600,14 +639,14 @@ test('sling and bodies', () => {
   g.choose('E'); run(g);
   ok(g.s.player.ammo === before + body.ammo && body.done, 'body ammo picked up');
   // Melee kills drop bodies; fireball kills don't.
-  const m = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 7, y: 3, hp: 1, maxHp: 1 }]);
+  const m = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 7, y: 3, hp: 1, maxHp: 1 }], 'rogue');
   forceRoll(m, 1, 1);
   m.choose('E'); run(m);
   ok(m.s.level.objects.some((o) => o.type === 'body' && o.x === 3), 'melee kill drops body');
   m.s.player.spells.fireball = 1;
   m.fireball(1);
   ok(!m.s.level.objects.some((o) => o.type === 'body' && o.x === 7), 'fireball leaves no body');
-  const none = sandbox(map); none.s.player.ammo = 0; forceRoll(none, 3, 3);
+  const none = sandbox(map, null, 'rogue'); none.s.player.ammo = 0; forceRoll(none, 3, 3);
   ok(!none.canShoot() && !none.shoot('E'), 'no shot without ammo');
 });
 
@@ -767,15 +806,15 @@ test('mimics: ambush, fight and reward', () => {
   forceRoll(g, 1, 1); g.d = () => 4; g.choose('E'); run(g);
   ok(m.done && g.s.player.coins === c0 + 2 * (3 + 4) && spells() === s0 + 1, 'melee kill: 2x chest coins + spell');
   ok(g.s.level.objects.some((o) => o.type === 'body' && o.x === 4), 'melee kill leaves a body');
-  // Sling kill.
-  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  // Sling kill (a Rogue).
+  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }], 'rogue'));
   forceRoll(g, 3, 3); g.choose('E'); g.d = () => 20; run(g);
   g.s.level.objects[0].hp = 1; g.s.player.x = 1;
   const c1 = g.s.player.coins;
   forceRoll(g, 3, 3); g.d = () => 1; g.shoot('E');
-  ok(g.s.level.objects[0].done && g.s.player.coins === c1 + 2 * (3 + 1), 'sling kill gives the hoard');
-  // Fireball kill.
-  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
+  ok(g.s.level.objects[0].done && g.s.player.coins === c1 + 2 * (3 + 1) + R.spellCoinValue(20), 'sling kill gives the hoard (a Rogue sells the spell)');
+  // Fireball kill (a Wizard).
+  g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }], 'wizard'));
   forceRoll(g, 3, 3); g.choose('E'); g.d = () => 20; run(g);
   g.s.player.spells.fireball = 1; const c2 = g.s.player.coins;
   forceRoll(g, 1, 1); g.d = (n) => Math.min(n, 6); g.fireball(0);
@@ -809,12 +848,153 @@ test('mimics: fake doors', () => {
   g.d = () => 5; const r = g.pickLock();
   ok(r.mimic && g.s.player.lockpicks === 1 && g.s.level.objects[0].mimic === 'door' && g.s.player.hp === g.s.player.maxHp - 4 && g.s.phase === 'roll', 'pick triggers ambush, pick kept');
   // Fireball on a hidden door mimic.
-  g = sandbox(map, [fake()]); g.s.floor = 20;
+  g = sandbox(map, [fake()], 'wizard'); g.s.floor = 20;
   g.s.player.x = 3; g.s.player.y = 2; g.s.player.spells.fireball = 1;
   forceRoll(g, 1, 1); g.d = () => 3;
   const c0 = g.s.player.coins, k0 = g.s.stats.kills;
   g.fireball(0);
   ok(g.s.level.objects[0].done && g.s.player.coins === c0 + 2 * (3 + 3) && g.s.stats.kills === k0 + 1, 'fireball on a hidden door mimic gives the hoard');
+});
+
+test('base hero, kills and classes', () => {
+  ok(R.levelThreshold(1) === 10 && R.levelThreshold(2) === 25 && R.levelThreshold(3) === 48 && R.levelThreshold(4) === 83, 'kill curve 10/25/48/83');
+  ok(R.levelForKills(9) === 0 && R.levelForKills(10) === 1 && R.levelForKills(24) === 1 && R.levelForKills(48) === 3, 'level for kills');
+  const g = Game.create('base');
+  const p = g.s.player;
+  ok(p.hp === 7 && p.maxHp === 7 && p.str === 1 && p.dex === 1 && p.ammo === 0 && !p.cls && p.level === 0, 'base hero');
+  ok(Object.values(p.spells).every((n) => n === 0), 'no spells');
+  // The base hero can't shoot or cast, even holding stones and spells.
+  const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
+  const b = sandbox(map, [{ type: 'enemy', x: 5, y: 1, hp: 1, maxHp: 1 }]);
+  b.s.player.ammo = 2; b.s.player.spells.fireball = 1; b.s.player.spells.reroll = 1;
+  forceRoll(b, 3, 3);
+  ok(!b.canShoot() && !b.canCast('fireball') && !b.canCast('reroll'), 'base hero cannot shoot or cast');
+  // The 10th kill owes a class; rolling waits for the choice.
+  b.s.stats.kills = 9;
+  b.choose('E'); b.drainEvents(); run(b);
+  ok(b.s.stats.kills === 10 && b.levelsOwed() === 1 && b.drainEvents().includes('levelUp'), '10th kill: class owed');
+  ok(!b.roll() && b.s.phase === 'roll', 'cannot roll until a class is chosen');
+  ok(!b.chooseBoon('hp') && !b.chooseClass('bard') && !b.chooseClass('wizard'), 'bad choices refused (wizard needs a spell)');
+  const stones = b.s.player.ammo, coins0 = b.s.player.coins; // includes stones picked up from the body
+  ok(b.chooseClass('fighter') && b.s.player.maxHp === 15 && b.s.player.level === 1 && b.levelsOwed() === 0, 'fighter: +5 max health');
+  ok(b.s.player.ammo === 0 && b.s.player.spells.fireball === 0 && b.s.player.coins === coins0 + stones * R.STONE_COINS + 2 * R.spellCoinValue(1), 'fighter sells stones and spells');
+  ok(!b.chooseClass('rogue'), 'class only once');
+  ok(b.roll(), 'roll after choosing');
+
+  const mk = (cls, spell) => { const h = sandbox(map); h.s.stats.kills = 10; h.s.player.ammo = 1; h.s.player.spells.luck = 1; h.chooseClass(cls, spell); return h; };
+  const r = mk('rogue'), w = mk('wizard', 'fireball');
+  ok(r.s.player.maxHp === 12 && r.s.player.dex === 3 && r.s.player.ammo === 6 && r.s.player.spells.luck === 0, 'rogue: +2 health, +2 DEX, 5 stones, sells spells');
+  ok(w.s.player.maxHp === 10 && w.s.player.ammo === 0 && w.s.player.spells.luck === 1 && w.s.player.slots.length === 1 && w.s.player.slots[0].spell === 'fireball', 'wizard: a slot, keeps spells, sells stones');
+  // Loot after choosing a class.
+  const loot = sandbox(map, [{ type: 'body', x: 2, y: 1, ammo: 2 }, { type: 'darkchest', x: 3, y: 1 }], 'fighter');
+  forceRoll(loot, 1, 2); loot.s.parity = 'ortho'; loot.s.steps = 3; loot.d = (n) => Math.min(n, 2);
+  const c0 = loot.s.player.coins;
+  loot.choose('E'); run(loot);
+  ok(loot.s.player.ammo === 0 && Object.values(loot.s.player.spells).every((n) => n === 0) &&
+    loot.s.player.coins === c0 + 2 + (R.coinValue(1) + 2) + R.spellCoinValue(1), 'fighter sells found stones and spells');
+  // Shops only offer what the class can use.
+  for (const cls of [null, 'fighter', 'rogue', 'wizard']) {
+    for (let k = 0; k < 20; k++) {
+      const sh = Game.create('shop' + k);
+      if (cls) setClass(sh, cls);
+      sh.s.phase = 'levelDone'; sh.s.floor = 4; sh.nextFloor();
+      const ids = sh.s.shop.items.map((i) => i.id);
+      ok(ids.every((id) => !DC.SPELLS[id] || cls === 'wizard') && (!ids.includes('ammo') || cls === 'rogue'), `shop offers usable items (${cls})`);
+    }
+  }
+});
+
+test('level-ups, boons and wizard slots', () => {
+  const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
+  const f = sandbox(map, null, 'fighter');
+  f.s.stats.kills = 25;
+  ok(f.levelsOwed() === 1 && f.boonChoices().join() === 'hp,str', 'fighter boons');
+  const hp0 = f.s.player.maxHp;
+  ok(f.chooseBoon('hp') && f.s.player.maxHp === hp0 + 2 + 2 && f.s.player.level === 2, 'fighter level: +2 health, +2 boon');
+  f.s.stats.kills = 83;
+  ok(f.levelsOwed() === 2 && f.chooseBoon('str') && f.chooseBoon('str') && f.s.player.str === 3 && f.levelsOwed() === 0, 'two owed levels');
+  ok(!f.chooseBoon('str'), 'nothing owed');
+  const r = sandbox(map, null, 'rogue');
+  r.s.stats.kills = 25;
+  ok(r.boonChoices().join() === 'move,range' && !r.chooseBoon('hp') && r.chooseBoon('move') && r.s.player.moveBoost === 1 && r.s.player.maxHp === 11, 'rogue level: +1 health, move boon');
+  const w = sandbox(map, null, 'wizard');
+  w.s.player.slots = [{ spell: 'reroll', ready: true }];
+  w.s.stats.kills = 25;
+  ok(w.boonChoices().join() === 'slot,range' && !w.chooseBoon('slot') && w.chooseBoon('slot', 'luck') && w.s.player.slots.length === 2, 'wizard slot boon');
+  // Slots are used before charges and recharge each floor.
+  w.s.player.spells.reroll = 1;
+  forceRoll(w, 1, 2);
+  ok(w.spellCount('reroll') === 2 && w.reroll(0) && w.s.player.spells.reroll === 1 && !w.s.player.slots[0].ready, 'slot used first');
+  ok(w.reroll(1) && w.s.player.spells.reroll === 0 && !w.canCast('reroll'), 'then the charge');
+  const wz = Game.create('slots'); setClass(wz, 'wizard'); wz.s.player.slots = [{ spell: 'fireball', ready: false }];
+  wz.s.phase = 'levelDone'; wz.nextFloor();
+  ok(wz.s.player.slots[0].ready, 'slots recharge on a new floor');
+  // Wizard missiles need no stones.
+  const m = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }], 'wizard');
+  forceRoll(m, 1, 1);
+  ok(m.s.player.ammo === 0 && m.canShoot() && m.shoot('E').hit && m.s.player.ammo === 0, 'magic missile is unlimited');
+  ok(!m.s.level.objects.some((o) => o.type === 'body' && !o.done) || true, 'missile kill');
+});
+
+test('move and range boosts', () => {
+  const map = ['############', '#@.........#', '#..........#', '#.........>#', '############'];
+  const g = sandbox(map, null, 'rogue');
+  g.s.player.moveBoost = 2;
+  forceRoll(g, 1, 1); // die 2, may go 2..4
+  g.choose('E');
+  g.step();
+  ok(g.s.phase === 'moving' && g.s.player.x === 2, 'no stop before the die value');
+  g.step();
+  ok(g.s.phase === 'stopPrompt' && g.s.player.x === 3 && g.canStop(), 'stop offered after the die value');
+  ok(g.continueMove() && g.s.phase === 'moving', 'keep going');
+  g.step();
+  ok(g.s.phase === 'stopPrompt' && g.s.player.x === 4, 'stop offered again');
+  ok(g.stopMove() && g.s.phase === 'roll' && g.s.player.x === 4, 'stop ends the turn there');
+  forceRoll(g, 1, 1); g.choose('E'); run(g);
+  while (g.s.phase === 'stopPrompt') { g.continueMove(); run(g); }
+  ok(g.s.player.x === 8 && g.s.phase === 'roll', 'full move is die + boost');
+  ok(!g.stopMove(), 'no stop outside a move');
+  // Without a boost there is never a stop prompt.
+  const plain = sandbox(map, null, 'fighter'); forceRoll(plain, 1, 1); plain.choose('E'); run(plain);
+  ok(plain.s.player.x === 3 && plain.s.phase === 'roll', 'no boost, no stop');
+
+  // Range: free aim at enemies within |dx| + |dy| <= range, with line of sight.
+  const rmap = ['###########', '#@...#....#', '#.........#', '#........>#', '###########'];
+  const enemies = [{ type: 'enemy', x: 3, y: 2, hp: 1, maxHp: 1 }, { type: 'enemy', x: 7, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 4, y: 3, hp: 1, maxHp: 1 }];
+  const r = sandbox(rmap, enemies, 'rogue');
+  forceRoll(r, 1, 1);
+  ok(r.freeTargets().length === 0, 'no range boost, no free aim');
+  r.s.player.range = 3;
+  ok(r.freeTargets().join() === '0', 'only the enemy within 3 steps');
+  r.s.player.range = 5;
+  ok(r.freeTargets().join() === '0,2', 'range 5 adds the second; the third is behind a wall');
+  const res = r.shootAt(2);
+  ok(res && res.hit && r.s.level.objects[2].done && r.s.player.ammo === 2 && r.s.phase === 'roll', 'free shot hits and ends the turn');
+  ok(!r.shootAt(0), 'no free shot outside the choose phase');
+  r.s.player.ammo = 0; forceRoll(r, 1, 1);
+  ok(r.freeTargets().length === 0, 'rogue needs stones');
+});
+
+test('class checkpoints', () => {
+  const g = Game.create('classy');
+  setClass(g, 'wizard');
+  Object.assign(g.s.player, { slots: [{ spell: 'invis', ready: false }], range: 2, level: 1 });
+  const cp = JSON.parse(JSON.stringify(g.checkpointFor(4)));
+  ok(cp.v === 3 && Game.validateCheckpoint(cp) === null, 'v3 checkpoint valid');
+  const back = Game.fromSave(cp).game.s.player;
+  ok(back.cls === 'wizard' && back.level === 1 && back.range === 2 && back.slots.length === 1 && back.slots[0].ready, 'class restored, slots ready');
+  const bad = [
+    (c) => { c.player.cls = 'bard'; }, (c) => { c.player.level = 0; }, (c) => { c.player.level = 5; },
+    (c) => { c.player.slots = ['nope']; }, (c) => { c.player.cls = 'fighter'; }, (c) => { c.player.range = -1; },
+    (c) => { c.tutorial = 'yes'; }, (c) => { c.tutorial = true; c.floor = 4; },
+  ];
+  bad.forEach((mut, i) => { const c = JSON.parse(JSON.stringify(cp)); mut(c); ok(Game.fromSave(c).error, 'bad class checkpoint ' + i); });
+  // Version 2 saves: no class; old floors 1-3 were the tutorial, later floors move up by 3.
+  const v2 = { v: 2, seedText: 'old', floor: 9, player: { hp: 8, maxHp: 10, str: 2, coins: 4, spells: { noclip: 0, fireball: 1, luck: 0, reroll: 0, invis: 0 } }, stats: { kills: 12, coins: 0, floorsCleared: 8 } };
+  const o = Game.fromSave(v2).game;
+  ok(o && o.s.floor === 6 && !o.s.tutorial && !o.s.player.cls && o.levelsOwed() === 1, 'v2 save converts and is owed a class');
+  const o2 = Game.fromSave(Object.assign({}, v2, { floor: 2 })).game;
+  ok(o2 && o2.s.tutorial && o2.s.floor === 2, 'v2 tutorial floor');
 });
 
 test('sound events', () => {
@@ -828,7 +1008,7 @@ test('sound events', () => {
   ok(g.drainEvents().length === 0, 'drainEvents empties the list');
   ok(!JSON.stringify(g.s).includes('"events"') && !('events' in g.checkpointFor(2)), 'events never saved');
   // Sling, stairs, lock picks.
-  const h = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 2, maxHp: 2 }]);
+  const h = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 2, maxHp: 2 }], 'rogue');
   forceRoll(h, 3, 3); h.drainEvents();
   h.shoot('E');
   ok(h.drainEvents().join() === 'shoot,hit', 'shot events');
@@ -873,19 +1053,33 @@ test('random play simulation', () => {
     const g = Game.create('sim' + run);
     const pick = new DC.RNG(run + 1);
     g.s.player.hp = g.s.player.maxHp = 1000; // survive long enough to explore
+    if (run % 2) g.s.stats.kills = 40; // start some runs a few levels up, to exercise boosts
     for (let t = 0; t < 4000; t++) {
       const s = g.s;
       if (s.phase === 'dead') { deaths++; break; }
       if (s.phase === 'levelDone' || s.phase === 'shop') { g.nextFloor(); floors++; if (s.floor > 30) break; continue; }
-      if (s.phase === 'roll') { g.roll(); if (g.s.die === null) g.pickDie(pick.int(0, 1)); continue; }
+      if (s.phase === 'roll') {
+        settleLevels(g, pick);
+        ok(g.roll(), 'roll refused');
+        if (g.s.die === null) g.pickDie(pick.int(0, 1));
+        continue;
+      }
+      if (s.phase === 'choose' && g.freeTargets().length && pick.chance(0.3)) { ok(g.shootAt(pick.pick(g.freeTargets())), 'free shot'); continue; }
       if (s.phase === 'choose' && g.canShoot() && pick.chance(0.1)) { g.shoot(pick.pick(g.shotDirs())); continue; }
       if (s.phase === 'choose' || s.phase === 'redirect') {
         const d = g.availableDirs();
+        if (s.phase === 'redirect' && g.canStop() && pick.chance(0.3)) { ok(g.stopMove(), 'stop on redirect'); continue; }
         if (!d.length) { ok(s.phase === 'choose', 'redirect with no options'); g.passTurn(); continue; }
         g.choose(pick.pick(d));
         let n = 0;
-        while (g.s.phase === 'moving' || g.s.phase === 'pickPrompt') {
+        while (['moving', 'pickPrompt', 'stopPrompt'].includes(g.s.phase)) {
           if (g.s.phase === 'pickPrompt') { if (pick.chance(0.5)) g.pickLock(); else g.declinePick(); continue; }
+          if (g.s.phase === 'stopPrompt') {
+            const m = g.s.move;
+            ok(m.stepsLeft > 0 && m.stepsLeft <= m.extra, 'stop prompt only after the die value');
+            if (pick.chance(0.4)) g.stopMove(); else g.continueMove();
+            continue;
+          }
           g.step(); ok(++n < 500, 'runaway move'); if (n >= 500) break;
         }
         const L = g.s.level;

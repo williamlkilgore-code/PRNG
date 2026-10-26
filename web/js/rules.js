@@ -4,7 +4,9 @@
   const { RNG, seedFor } = DC;
 
   const rules = {
-    START_HP: 10,
+    // The base hero (before choosing a class): 7 health, STR 1, DEX 1,
+    // no ranged weapon and no spells.
+    START_HP: 7,
     START_STR: 1,
 
     // Enemies: damage = floor(level/20 + 1), health = floor(level/10 + 1)
@@ -61,8 +63,9 @@
   // items), 'layout' (walls and floor only) or 'none'. Seen stairs always stay.
   rules.darkMemory = (f) => (f >= 35 ? 'none' : f >= 20 ? 'layout' : 'full');
 
-  // Sling: ammo carried at the start of a run.
-  rules.START_AMMO = 3;
+  // Sling: stones carried at the start of a run (the base hero has no sling,
+  // but keeps any stones found for later).
+  rules.START_AMMO = 0;
   // Lock picks: d20 + DEX must reach the door color's target.
   rules.LOCK_TARGET = { gold: 12, crimson: 14, azure: 16, emerald: 18 };
   // Chance (0..1) that d20 + dex >= target.
@@ -77,6 +80,42 @@
   rules.MIMIC_FROM = 19;
   rules.MIMIC_CHANCE = 0.3;
   rules.MIMIC_DODGE = 12;
+
+  /* Floors 1-10 are simpler: bigger rooms (interior at least 5x5), more
+   * doorways, at most one lock and no portals before floor 6. */
+  rules.EARLY_FLOORS = 10;
+  rules.PORTALS_FROM = 6;
+
+  /* Classes and levels. Level 1 (choosing a class) needs 10 kills; each later
+   * level needs 1.5x as many kills as the one before (rounded up). */
+  rules.FIRST_LEVEL_KILLS = 10;
+  rules.LEVEL_KILL_GROWTH = 1.5;
+  // Kills needed to go from level n-1 to level n.
+  rules.killsForLevel = (n) => {
+    let k = rules.FIRST_LEVEL_KILLS;
+    for (let i = 2; i <= n; i++) k = Math.ceil(k * rules.LEVEL_KILL_GROWTH);
+    return k;
+  };
+  // Total kills needed to reach level n (0 for level 0).
+  rules.levelThreshold = (n) => {
+    let t = 0;
+    for (let i = 1; i <= n; i++) t += rules.killsForLevel(i);
+    return t;
+  };
+  rules.levelForKills = (kills) => {
+    let n = 0;
+    while (rules.levelThreshold(n + 1) <= kills) n++;
+    return n;
+  };
+  rules.CLASSES = {
+    fighter: { name: 'Fighter', hp: 5, dex: 0, ammo: 0, slots: 0, levelHp: 2, boons: ['hp', 'str'] },
+    rogue: { name: 'Rogue', hp: 2, dex: 2, ammo: 5, slots: 0, levelHp: 1, boons: ['move', 'range'] },
+    wizard: { name: 'Wizard', hp: 0, dex: 0, ammo: 0, slots: 1, levelHp: 1, boons: ['slot', 'range'] },
+  };
+  rules.BOON_HP = 2;          // Fighter's health boon
+  // Loot a class can't use turns into coins.
+  rules.spellCoinValue = (f) => 2 * rules.coinValue(f);
+  rules.STONE_COINS = 1;
 
   DC.rules = rules;
 })(typeof window !== 'undefined' ? window : globalThis);
