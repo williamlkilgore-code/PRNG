@@ -39,6 +39,7 @@
     <section class="board-wrap" aria-label="Dungeon map">
       <svg id="board" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Dungeon map"></svg>
       <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+      <div class="scene" id="scene" hidden title="Tap to skip"></div>
     </section>
 
     <aside class="controls" aria-label="Controls">
@@ -50,6 +51,10 @@
         </button>
       </div>
       <p class="status" id="status"></p>
+      <div class="stop-row" id="stopRow" hidden>
+        <button class="btn primary" type="button" id="stopBtn">Stop here</button>
+        <button class="btn" type="button" id="keepBtn">Keep going</button>
+      </div>
       <div class="pad" id="pad" aria-label="Direction pad"></div>
       <div class="spells" id="spells" aria-label="Spells"></div>
     </aside>

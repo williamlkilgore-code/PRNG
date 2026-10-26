@@ -742,7 +742,7 @@
     killEnemy(o, dropBody) {
       const L = this.s.level;
       this.clearObj(o);
-      this.countKill();
+      this.countKill(o);
       if (o.mimic) this.mimicReward(o);
       if (!dropBody) return;
       const body = { type: 'body', x: o.x, y: o.y, ammo: this.d(2) };
@@ -762,6 +762,7 @@
       const hp = 2 * R.enemyHealth(f);
       p.hp = Math.max(0, p.hp - dmg);
       Object.assign(o, { type: 'enemy', mimic: kind, hp, maxHp: hp });
+      this.lastMimic = { x: o.x, y: o.y, kind, color: o.color, dodged, dmg };
       s.pickTarget = -1;
       this.emit('mimic');
       this.emit('hurt');
@@ -787,9 +788,11 @@
     }
 
     // ---------------------------------------------------------- class & level
-    countKill() {
+    countKill(o) {
       const s = this.s;
       s.stats.kills++;
+      // Where the last kill happened (for the UI's effects; not saved).
+      if (o) this.lastKill = { x: o.x, y: o.y, kind: o.mimic ? 'mimic' : o.stalker ? 'stalker' : 'enemy' };
       if (R.levelForKills(s.stats.kills) > R.levelForKills(s.stats.kills - 1)) {
         this.emit('levelUp');
         this.log(s.player.cls ? 'Level up! Choose a boon.' : 'You feel stronger. Time to choose your path!', 'good');
@@ -1120,7 +1123,7 @@
       this.clearObj(o);
       o.burned = true;
       this.spendSpell('fireball');
-      if (o.type === 'enemy' || o.mimic) this.countKill(); // no body: nothing left to loot
+      if (o.type === 'enemy' || o.mimic) this.countKill(o); // no body: nothing left to loot
       if (o.mimic) this.mimicReward(o);
       this.updateVision(); // a burned door can open a line of sight
       const what = o.type === 'lock' ? `the ${o.color} door` : o.type === 'web' ? 'a web' : 'an enemy';

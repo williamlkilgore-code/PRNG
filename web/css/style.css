@@ -74,6 +74,8 @@ svg.icon { width: 24px; height: 24px; vertical-align: middle; }
 .stat b { font-weight: normal; font-size: 20px; }
 .hpbar { display: inline-block; width: 90px; height: 12px; border: 2px solid var(--ink); border-radius: 7px; overflow: hidden; vertical-align: middle; }
 .hpbar span { display: block; height: 100%; background: var(--bad); transition: width .25s; }
+.xpbar { display: inline-block; width: 46px; height: 8px; border: 2px solid var(--ink); border-radius: 5px; overflow: hidden; vertical-align: middle; }
+.xpbar span { display: block; height: 100%; background: #e8b923; transition: width .25s; }
 .menu { display: flex; gap: 6px; align-items: center; position: relative; }
 .menu-items { display: flex; gap: 6px; }
 .ghost-btn.menu-toggle { display: none; }
@@ -117,6 +119,62 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
   animation: toast-in .2s ease-out;
 }
 .toast[hidden] { display: none; }
+[hidden] { display: none !important; }
+
+/* Cut-scenes: drawn over the map; tap to skip. */
+.scene { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 10px; overflow: hidden; }
+.scene[hidden] { display: none; }
+.scene-svg { width: 100%; height: 100%; }
+.sc-bg { fill: rgba(20, 18, 28, .55); animation: sc-fade 1.6s ease forwards; }
+.sc-title { font-family: var(--font); font-size: 40px; text-anchor: middle; fill: #ffd23f; stroke: #2b2a33; stroke-width: 6px; paint-order: stroke; letter-spacing: 2px; animation: sc-title .5s .25s ease-out both; }
+.sc-title.bad { fill: #ff6b5e; }
+.sc-sub { font-family: var(--font); font-size: 20px; text-anchor: middle; fill: #fff; stroke: #2b2a33; stroke-width: 4px; paint-order: stroke; animation: sc-title .4s .5s ease-out both; }
+.sc-rays path { stroke: #ffd23f; stroke-width: 10; stroke-linecap: round; opacity: .7; }
+.sc-rays { animation: sc-spin 1.6s linear, sc-rays .9s ease-out both; }
+.sc-pop { animation: sc-pop .6s cubic-bezier(.3, 1.6, .5, 1) both; }
+.sc-shake { animation: sc-shake .5s .35s ease-in-out; }
+.sc-before { animation: sc-jolt .35s ease-in-out, sc-hide .01s .4s forwards; }
+.sc-after { opacity: 0; animation: sc-show .01s .4s forwards, sc-chomp .3s .45s ease-in-out 2; }
+@keyframes sc-fade { 0% { opacity: 0; } 15%, 85% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes sc-title { from { opacity: 0; transform: translateY(14px) scale(.8); } }
+@keyframes sc-spin { to { transform: rotate(60deg); } }
+@keyframes sc-rays { from { opacity: 0; transform: scale(.4); } }
+@keyframes sc-pop { from { opacity: 0; transform: scale(.2); } }
+@keyframes sc-shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+@keyframes sc-jolt { 25% { transform: rotate(-6deg); } 75% { transform: rotate(6deg); } }
+@keyframes sc-hide { to { opacity: 0; } }
+@keyframes sc-show { to { opacity: 1; } }
+@keyframes sc-chomp { 50% { transform: scale(1.12, .9); } }
+/* Kill effect on the enemy's square. */
+.kill-fx .ray { stroke: #f08a24; stroke-width: 3; stroke-linecap: round; }
+.kill-fx .burst { animation: fx-burst .6s ease-out forwards; }
+.kill-fx .slash { stroke: #fff; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 40; stroke-dashoffset: 40; animation: fx-slash .25s ease-out forwards, fx-out .3s .4s forwards; filter: drop-shadow(0 0 2px #c8372d); }
+.kill-fx .slash.two { animation-delay: .12s, .45s; }
+.kill-fx .puff { fill: #8f8a7c; opacity: 0; animation: fx-puff .7s .1s ease-out; }
+.kill-fx.big .burst { animation-duration: .8s; }
+@keyframes fx-burst { from { transform: scale(.3); opacity: 1; } to { transform: scale(1.6); opacity: 0; } }
+@keyframes fx-slash { to { stroke-dashoffset: 0; } }
+@keyframes fx-out { to { opacity: 0; } }
+@keyframes fx-puff { 0% { opacity: .6; transform: scale(.5); } 100% { opacity: 0; transform: scale(2); } }
+.target.free { fill: rgba(180, 140, 255, .25); stroke: #8d5cf0; }
+.target.free:hover { fill: rgba(180, 140, 255, .55); }
+
+.stop-row { display: flex; gap: 8px; }
+.stop-row[hidden] { display: none; }
+.stop-row .btn { flex: 1; }
+
+.class-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 8px 0; }
+.class-card { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; padding: 12px 10px; border: 2px solid var(--ink); border-radius: 12px;
+  background: var(--paper); color: var(--ink); font: inherit; cursor: pointer; box-shadow: var(--shadow); }
+.class-card:hover, .class-card:focus-visible { border-color: var(--accent); transform: translateY(-2px); }
+.class-card .class-icon { width: 56px; height: 56px; }
+.class-card .name { font-size: 22px; }
+.class-card .desc { font-size: 15px; }
+.class-card ul { margin: 4px 0 0; padding-left: 18px; text-align: left; font-size: 14px; }
+.spell-pick { display: flex; flex-direction: column; gap: 6px; }
+.spell-choice { display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px; border: 2px solid var(--ink); border-radius: 10px; background: var(--paper); color: var(--ink); font: inherit; cursor: pointer; }
+.spell-choice:hover { border-color: var(--accent); }
+.spell-choice .icon { width: 32px; height: 32px; flex: none; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }
 .toast.log-good { color: var(--good); } .toast.log-bad, .toast.log-fight { color: var(--bad); }
 .toast.log-warn, .toast.log-status { color: var(--warn); } .toast.log-spell { color: var(--spell); }

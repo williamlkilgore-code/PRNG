@@ -1,7 +1,7 @@
 /* DOM wiring: renders game state, handles input, runs move animation. */
 (function () {
   const DC = window.DC;
-  const { Game, SPELLS, rules: R } = DC;
+  const { Game, SPELLS, BOONS, rules: R } = DC;
   const RD = DC.render;
   // Sound is optional: without audio.js (or Web Audio) these do nothing.
   const AU = DC.audio || { sfx() {}, setMusic() {}, unlock() {}, setVolume() {}, setOn() {}, toggleMute() { return true; }, settings: {}, available: false };
@@ -12,6 +12,8 @@
   const BEST_KEY = 'dicedelve-best-v1';
   const THEME_KEY = 'dicedelve-theme';
   const HINTS_KEY = 'dicedelve-hints-v1';
+  const TUTORIAL_KEY = 'dicedelve-tutorial-v1';
+  const FX_KEY = 'dicedelve-fx-v1';
   const PAD_ORDER = ['NW', 'N', 'NE', 'W', null, 'E', 'SW', 'S', 'SE'];
   const ANGLE = { E: 0, SE: 45, S: 90, SW: 135, W: 180, NW: 225, N: 270, NE: 315 };
   const SPELL_ORDER = ['reroll', 'luck', 'noclip', 'invis', 'fireball'];
@@ -30,11 +32,63 @@
   const TOAST_KINDS = new Set(['status', 'good', 'fight', 'bad']);
   const DIE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="5" width="22" height="22" rx="5" style="fill:#fff;stroke:currentColor" stroke-width="2.4"/><circle cx="11" cy="11" r="2.3" style="fill:#2b2a33"/><circle cx="16" cy="16" r="2.3" style="fill:#2b2a33"/><circle cx="21" cy="21" r="2.3" style="fill:#2b2a33"/></svg>';
 
+  /* Saves live in localStorage, mirrored to IndexedDB: if the browser
+   * clears one, the other restores it at startup. The game also asks the
+   * browser to keep its storage persistent (not evicted to free space). */
+  const MIRRORED = new Set([SAVE_KEY, SLOTS_KEY]);
+  const mirror = (() => {
+    let dbp = null;
+    const open = () => dbp || (dbp = new Promise((res, rej) => {
+      try {
+        const r = indexedDB.open('dicedelve', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('kv');
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      } catch (e) { rej(e); }
+    }));
+    return {
+      set(k, v) {
+        open().then((db) => {
+          const st = db.transaction('kv', 'readwrite').objectStore('kv');
+          if (v === null) st.delete(k); else st.put(v, k);
+        }).catch(() => { /* no IndexedDB: localStorage only */ });
+      },
+      get(k) {
+        return open().then((db) => new Promise((res) => {
+          const r = db.transaction('kv').objectStore('kv').get(k);
+          r.onsuccess = () => res(typeof r.result === 'string' ? r.result : null);
+          r.onerror = () => res(null);
+        })).catch(() => null);
+      },
+    };
+  })();
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-    set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
-    del(k) { try { localStorage.removeItem(k); } catch (e) { /* storage unavailable */ } },
+    set(k, v) {
+      if (MIRRORED.has(k)) mirror.set(k, v);
+      try { localStorage.setItem(k, v); return true; } catch (e) { return MIRRORED.has(k); }
+    },
+    del(k) {
+      if (MIRRORED.has(k)) mirror.set(k, null);
+      try { localStorage.removeItem(k); } catch (e) { /* storage unavailable */ }
+    },
   };
+  // Restore saves from the IndexedDB copy if localStorage lost them.
+  async function restoreMirror() {
+    for (const k of MIRRORED) {
+      if (store.get(k) !== null) { mirror.set(k, store.get(k)); continue; }
+      const v = await mirror.get(k);
+      if (v !== null) { try { localStorage.setItem(k, v); } catch (e) { ui.mirrorOnly = true; } }
+    }
+  }
+  const storageInfo = { persisted: null };
+  function askPersist() {
+    try {
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().then((v) => { storageInfo.persisted = v; }).catch(() => {});
+      }
+    } catch (e) { /* not supported */ }
+  }
   // Auto-save writes the checkpoint, which only changes when a floor starts or is finished.
   let lastSaved = null;
   const save = () => {
@@ -47,8 +101,11 @@
 
   function best() { return parseInt(store.get(BEST_KEY) || '0', 10) || 0; }
   function recordBest() {
-    if (game && game.s.floor > best()) store.set(BEST_KEY, String(game.s.floor));
+    if (game && !game.s.tutorial && game.s.floor > best()) store.set(BEST_KEY, String(game.s.floor));
   }
+  // "Floor 7" or "Tutorial 2/3" (tutorial floors don't count as floors).
+  const floorName = (s) => (s.tutorial ? `Tutorial ${s.floor}/3` : `Floor ${s.floor}`);
+  const boardKeyOf = (s) => `${s.seed}:${s.tutorial ? 't' : ''}${s.floor}`;
 
   // ------------------------------------------------------------------ render
   function render() {
@@ -65,7 +122,13 @@
   // Engine events (coin, hit, web, ...) become sound effects; the music
   // follows the floor's mood.
   function playEvents() {
-    for (const e of game.drainEvents()) AU.sfx(e);
+    for (const e of game.drainEvents()) {
+      AU.sfx(e);
+      if (e === 'kill' && game.lastKill) queueScene({ type: 'kill', at: game.lastKill });
+      else if (e === 'mimic' && game.lastMimic) queueScene({ type: 'mimic', at: game.lastMimic });
+      else if (e === 'levelUp') queueScene({ type: 'levelUp', level: game.s.player.level + game.levelsOwed(), cls: game.s.player.cls });
+      else if (e === 'classChosen') queueScene({ type: 'class', cls: game.s.player.cls });
+    }
   }
   function syncMusic() {
     const s = game.s;
@@ -73,7 +136,7 @@
     if (!ui.hintsReady || s.phase === 'dead') mood = 'none';
     else if (s.shop) mood = 'shop';
     else if (s.level && s.level.dark) mood = 'dark';
-    else if (s.floor <= 3) mood = 'tutorial';
+    else if (s.tutorial) mood = 'tutorial';
     AU.setMusic(mood, s.seed, s.floor);
   }
 
@@ -85,11 +148,12 @@
         <input type="range" id="${bus}Vol" min="0" max="100" value="${Math.round((st[bus] || 0) * 100)}" aria-label="${label} volume">
       </div>`;
     openModal(`
-      <h2>Sound</h2>
+      <h2>Sound &amp; effects</h2>
       ${AU.available ? '' : '<p class="notice bad">This browser doesn\'t support Web Audio, so the game is silent.</p>'}
       ${row('sfx', 'Sound effects')}
       ${row('music', 'Music')}
       <label class="check"><input type="checkbox" id="muteAll" ${st.muted ? 'checked' : ''}> Mute everything <span class="muted">(M key)</span></label>
+      <label class="check"><input type="checkbox" id="fxOn" ${fx.on ? 'checked' : ''}> Cut-scenes (kills, mimics, level-ups)${reducedMotion ? ' <span class="muted">· off while your device asks for reduced motion</span>' : ''}</label>
       <p class="muted">All sounds are generated in your browser. The music changes with the floor: calmer in the tutorial, tense on dark floors, cheerful in shops.</p>
       <div class="row">
         <button class="btn" type="button" id="soundTest">Test</button>
@@ -101,6 +165,7 @@
     });
     $('#muteAll').addEventListener('change', (e) => { if (AU.settings.muted !== e.target.checked) AU.toggleMute(); renderSoundBtn(); });
     $('#soundTest').addEventListener('click', () => { AU.unlock(); AU.sfx('coin'); });
+    $('#fxOn').addEventListener('change', (e) => { fx.on = e.target.checked; store.set(FX_KEY, fx.on ? '1' : '0'); });
   }
   function renderSoundBtn() {
     const b = $('#soundBtn');
@@ -122,7 +187,11 @@
     items: { icon: 'i-chest', title: 'Treasure', text: 'Coins buy things in shops (floor 5 is the first). Chests hold extra coins. Hearts and med packs heal you.' },
     portal: { icon: 'i-portal', title: 'Portals', text: 'Step into a portal and you come out of its matching twin, still moving in the same direction.' },
     dark: { icon: 'i-moon', title: 'A dark floor', text: "You can only see the squares next to you. Every dark floor has a torch you can reach without keys. Pick it up to see 4 squares around you. There's also a dark chest with a free spell." },
-    shoot: { icon: 'i-sling', title: 'Your sling', text: 'After rolling and picking a die you can <b>shoot instead of moving</b>: tap the sling, then a direction. The stone flies as far as your chosen die in a straight or diagonal line (same as your move) and hits the first enemy for 1 damage. Enemies you kill leave bodies; walk over them to collect stones.' },
+    shoot: { icon: 'i-sling', title: 'Ranged attacks', text: 'After rolling and picking a die you can <b>shoot instead of moving</b>: tap the ranged button, then a direction. The shot flies as far as your chosen die in a straight or diagonal line (same as your move) and hits the first enemy for 1 damage. Rogues use sling stones (collect more from bodies); a Wizard\'s magic missile never runs out.' },
+    hero: { icon: 'i-cls-base', title: 'Your hero', text: `You start plain: ${R.START_HP} health, no ranged weapon and no spells. After <b>${R.FIRST_LEVEL_KILLS} kills</b> you choose a class: Fighter, Wizard or Rogue. Stones and spells you find before then are kept for later.` },
+    level: { icon: 'i-levelup', title: 'Levels', text: 'More kills bring more levels: each one needs 1.5× as many kills as the last. Every level adds health and lets you pick one of two boons for your class. The bar next to your class shows your progress.' },
+    freeaim: { icon: 'i-missile', title: 'Range', text: 'With a range boost, enemies within that many steps (counting straight squares) glow when you aim. Tap one to shoot it directly, in any direction, whatever the dice say. Farther enemies still need a shot along the die\'s direction.' },
+    stop: { icon: 'i-cls-rogue', title: 'Fleet foot', text: 'With a move boost you slide your die plus the boost. Once you have moved at least the die\'s number, you can tap <b>Stop here</b> on any square, or keep going.' },
     stalker: { icon: 'i-stalker', title: 'Stalkers', text: 'These hooded enemies hunt you. After each of your turns, a stalker that can see you moves one square closer, and attacks if it is next to you. On dark floors they spot you only up close, unless your torch is lit, which they can see from anywhere.' },
     mimic: { icon: 'i-mimic-open', title: 'Mimic!', text: "Deep in the dungeon, some chests and locked doors are monsters in disguise. When one wakes it bites first: d20 + DEX of 12 or more takes a normal bite, anything less doubles it. It has double an enemy's health and never moves. Kill it for twice a chest's coins plus a random spell. Look closely: a mimic shows tiny teeth at its seam." },
     lockpick: { icon: 'i-lockpick', title: 'Lock picks', text: "With a lock pick, walking into a locked door you don't have the key for lets you try the lock: d20 + DEX must reach the door's number (gold 12, crimson 14, azure 16, emerald 18). Buy DEX in the shop to get better at it." },
@@ -141,11 +210,12 @@
   function checkHints() {
     if (!ui.hintsReady || hintState.off) return;
     const s = game.s, L = s.level;
-    const key = `${s.seed}:${s.floor}`;
+    const key = boardKeyOf(s);
     if (L && ui.hintFloor !== key) {
       ui.hintFloor = key;
       const has = (t) => L.objects.some((o) => o.type === t);
       queueHint('start');
+      if (!s.player.cls && !s.tutorial) queueHint('hero');
       if (L.rooms.length > 1) queueHint('doorway');
       if (has('web')) queueHint('web');
       if (has('enemy')) queueHint('enemy');
@@ -158,14 +228,17 @@
     if (L && L.objects.some((o) => o.type === 'enemy' && o.mimic && !o.done)) queueHint('mimic');
     if (s.phase === 'choose' && s.dice && s.die !== null) queueHint(s.parity === 'ortho' ? 'even' : 'odd');
     if (s.phase === 'redirect') queueHint('blocked');
-    if (Object.values(s.player.spells).some((n) => n > 0)) queueHint('spells');
-    if (s.phase === 'choose' && s.floor >= 3 && game.canShoot()) queueHint('shoot');
+    if (s.player.cls === 'wizard') queueHint('spells');
+    if (s.player.level >= 2) queueHint('level');
+    if (s.phase === 'choose' && game.canShoot()) queueHint('shoot');
+    if (s.phase === 'choose' && game.freeTargets().length) queueHint('freeaim');
+    if (s.phase === 'stopPrompt') queueHint('stop');
     if (s.player.lockpicks > 0) queueHint('lockpick');
     showNextHint();
   }
   function showNextHint() {
     if (!ui.hintsReady || hintState.off || !ui.hintQueue.length || ui.busy || !$('#modal').hidden) return;
-    if (!['roll', 'choose', 'redirect'].includes(game.s.phase)) return;
+    if (!['roll', 'choose', 'redirect', 'stopPrompt'].includes(game.s.phase) || game.levelsOwed() > 0 || ui.scene) return;
     const id = ui.hintQueue.shift();
     const h = HINTS[id];
     hintState.seen[id] = true;
@@ -186,12 +259,19 @@
   function renderHud() {
     const s = game.s, p = s.player;
     const keys = p.keys.map((k) => RD.icon('i-key', '', RD.COLORS[k])).join('');
+    const C = p.cls ? R.CLASSES[p.cls] : null;
+    const lo = R.levelThreshold(p.level), hi = R.levelThreshold(p.level + 1);
+    const prog = Math.max(0, Math.min(1, (s.stats.kills - lo) / (hi - lo)));
     $('#stats').innerHTML = `
-      <span class="stat" title="Floor">${RD.icon('i-stairs')}<b>Floor ${s.floor}</b></span>
+      <span class="stat" title="${s.tutorial ? 'Tutorial floor (does not count)' : 'Floor'}">${RD.icon('i-stairs')}<b>${floorName(s)}</b></span>
+      <span class="stat cls-stat" title="${C ? C.name : 'Base hero'}, level ${p.level}: ${s.stats.kills} kills, next level at ${hi}">${RD.icon('i-cls-' + (p.cls || 'base'))}<b>${C ? 'Lv ' + p.level : 'Hero'}</b>
+        <span class="xpbar"><span style="width:${(100 * prog).toFixed(0)}%"></span></span></span>
       <span class="stat" title="Health">${RD.icon('i-heart')}<b>${p.hp}/${p.maxHp}</b>
         <span class="hpbar"><span style="width:${(100 * p.hp) / p.maxHp}%"></span></span></span>
       <span class="stat" title="Strength">${RD.icon('i-sp-str')}<b>${p.str}</b></span>
       <span class="stat" title="Dexterity">${RD.icon('i-sp-dex', '', '#7b4fc0')}<b>${p.dex}</b></span>
+      ${p.range ? `<span class="stat" title="Range: shoot enemies within ${p.range} steps">${RD.icon('i-missile')}<b>${p.range}</b></span>` : ''}
+      ${p.moveBoost ? `<span class="stat" title="Move boost: up to ${p.moveBoost} extra squares">${RD.icon('i-cls-rogue')}<b>+${p.moveBoost}</b></span>` : ''}
       ${p.lockpicks ? `<span class="stat" title="Lock picks">${RD.icon('i-lockpick')}<b>${p.lockpicks}</b></span>` : ''}
       <span class="stat" title="Coins">${RD.icon('i-coin')}<b>${p.coins}</b></span>
       ${keys ? `<span class="stat" title="Keys">${keys}</span>` : ''}
@@ -201,12 +281,12 @@
 
   function renderBoard() {
     const s = game.s, svg = $('#board');
-    const key = s.level ? `${s.seed}:${s.floor}` : `shop:${s.floor}`;
+    const key = s.level ? boardKeyOf(s) : `shop:${s.floor}`;
     if (ui.boardKey !== key) {
       ui.boardKey = key;
       if (s.level) {
         svg.setAttribute('viewBox', `0 0 ${s.level.w * RD.C} ${s.level.h * RD.C}`);
-        svg.innerHTML = `<g class="static">${RD.staticLayer(s.level)}</g><g class="dyn"></g><g class="preview-layer"></g>`;
+        svg.innerHTML = `<g class="static">${RD.staticLayer(s.level)}</g><g class="dyn"></g><g class="preview-layer"></g><g class="fx-layer"></g>`;
       } else {
         svg.setAttribute('viewBox', `0 0 ${17 * RD.C} ${13 * RD.C}`);
         svg.innerHTML = `<g class="static">${RD.shopScene()}</g><g class="dyn"></g><g class="preview-layer"></g>`;
@@ -238,8 +318,8 @@
     if (s.dice && s.level && s.die === null) {
       info.innerHTML = `<span class="big">Pick</span>a die${s.halved ? '<br><span class="tag halved">webbed ½</span>' : ''}`;
     } else if (s.dice && s.level) {
-      const left = s.phase === 'moving' || s.phase === 'redirect' ? s.move.stepsLeft : s.steps;
-      const moving = s.phase === 'moving' || s.phase === 'redirect';
+      const moving = ['moving', 'redirect', 'stopPrompt'].includes(s.phase) && !!s.move;
+      const left = moving ? s.move.stepsLeft : s.steps;
       info.innerHTML = `<span class="big">${left}</span>${moving ? 'moves left' : 'moves'}<br>
         <span class="tag">${s.parity === 'ortho' ? '✚ orthogonal' : '✖ diagonal'}</span>
         ${s.halved ? '<span class="tag halved">webbed ½</span>' : ''}`;
@@ -248,37 +328,52 @@
     }
 
     $('#status').innerHTML = statusText();
-    if (ui.aiming && !game.canShoot()) ui.aiming = false;
+    const canAim = () => game.canShoot() || game.freeTargets().length > 0;
+    if (ui.aiming && !canAim()) ui.aiming = false;
     const legal = ui.busy ? [] : game.availableDirs();
     const dirs = ui.targeting ? [] : ui.aiming ? game.shotDirs() : legal;
-    const sling = $('#slingBtn');
-    sling.disabled = ui.busy || !(ui.aiming || game.canShoot());
+    // Ranged button: the Rogue's sling or the Wizard's magic missile.
+    const sling = $('#slingBtn'), p = s.player;
+    const ranged = p.cls === 'rogue' || p.cls === 'wizard';
+    sling.hidden = !ranged;
+    sling.disabled = ui.busy || !(ui.aiming || canAim());
     sling.classList.toggle('armed', !!ui.aiming);
-    sling.querySelector('.count').textContent = s.player.ammo;
+    sling.querySelector('use').setAttribute('href', p.cls === 'wizard' ? '#i-missile' : '#i-sling');
+    sling.title = p.cls === 'wizard' ? 'Magic missile: shoot instead of moving (unlimited)' : 'Sling: shoot instead of moving';
+    sling.querySelector('.count').textContent = p.cls === 'wizard' ? '∞' : p.ammo;
+    // Move boost: stop anywhere once the die's value has been moved.
+    const canStop = !ui.busy && game.canStop() && s.phase !== 'moving';
+    $('#stopRow').hidden = !canStop;
+    if (canStop) $('#keepBtn').hidden = s.phase !== 'stopPrompt';
     document.querySelectorAll('#pad [data-dir]').forEach((b) => { b.disabled = !dirs.includes(b.dataset.dir); });
 
     // The pad's center is the Roll button, becomes Pass when no move is
     // legal, and otherwise shows the moves left.
     const center = $('#padCenter');
     const canRoll = !ui.busy && !ui.targeting && s.phase === 'roll';
-    const canPass = !ui.busy && !ui.targeting && !ui.aiming && s.phase === 'choose' && legal.length === 0;
-    const mode = canRoll ? 'roll' : canPass ? 'pass' : 'count';
-    if (center.dataset.mode !== mode || mode === 'count') {
-      center.dataset.mode = mode;
+    const canPass = !ui.busy && !ui.targeting && !ui.aiming && s.phase === 'choose' && s.die !== null && legal.length === 0;
+    const mode = canRoll ? 'roll' : canPass ? 'pass' : canStop ? 'stop' : 'count';
+    const modeKey = mode + (game.levelsOwed() > 0 ? '+lvl' : '');
+    if (center.dataset.mode !== modeKey || mode === 'count') {
+      center.dataset.mode = modeKey;
       center.className = 'pad-center ' + mode;
       center.disabled = mode === 'count';
-      if (mode === 'roll') { center.innerHTML = `${DIE_ICON}<span>Roll</span>`; center.setAttribute('aria-label', 'Roll dice'); }
+      if (mode === 'roll' && game.levelsOwed() > 0) { center.innerHTML = `${RD.icon('i-levelup')}<span>Level</span>`; center.setAttribute('aria-label', 'Choose your level-up'); }
+      else if (mode === 'roll') { center.innerHTML = `${DIE_ICON}<span>Roll</span>`; center.setAttribute('aria-label', 'Roll dice'); }
       else if (mode === 'pass') { center.innerHTML = '<span>Pass</span>'; center.setAttribute('aria-label', 'Pass turn'); }
+      else if (mode === 'stop') { center.innerHTML = '<span>Stop</span>'; center.setAttribute('aria-label', 'Stop here'); }
       else {
-        const moving = s.dice && s.level && s.die !== null && ['choose', 'redirect', 'moving'].includes(s.phase);
+        const moving = s.dice && s.level && s.die !== null && ['choose', 'redirect', 'moving', 'stopPrompt'].includes(s.phase);
         center.innerHTML = moving ? `${game.stepsLeft()}<small>moves</small>` : '·';
         center.setAttribute('aria-label', moving ? `${game.stepsLeft()} moves left` : 'Waiting');
       }
     }
 
+    // Only Wizards cast; slots and charges both count.
     document.querySelectorAll('#spells [data-spell]').forEach((b) => {
       const name = b.dataset.spell;
-      const n = s.player.spells[name];
+      const n = game.spellCount(name);
+      b.hidden = s.player.cls !== 'wizard';
       const armed = (name === 'noclip' || name === 'invis') && s.armed[name];
       const active = armed || (name === 'fireball' && ui.targeting);
       b.disabled = ui.busy || !(active || game.canCast(name));
@@ -333,7 +428,13 @@
   function statusText() {
     const s = game.s;
     if (ui.targeting) return 'Fireball: tap an obstacle (web, enemy or locked door) to destroy it. Tap the spell again to cancel.';
-    if (ui.aiming) return `Sling: tap a ${s.parity === 'ortho' ? 'straight' : 'diagonal'} direction to shoot (range ${s.steps}). It hits the first enemy in line and ends your turn. Tap the sling again to cancel.`;
+    if (ui.aiming) {
+      const what = s.player.cls === 'wizard' ? 'Magic missile' : 'Sling';
+      const free = game.freeTargets().length ? ` Or tap a glowing enemy (within ${s.player.range} steps) to shoot it directly.` : '';
+      const dirs = game.shotDirs().length ? `tap a ${s.parity === 'ortho' ? 'straight' : 'diagonal'} direction to shoot (range ${s.steps}).` : (s.die === null ? 'pick a die to shoot along its direction.' : 'no clear line this roll.');
+      return `${what}: ${dirs}${free} It hits the first enemy in line and ends your turn. Tap the button again to cancel.`;
+    }
+    if (game.levelsOwed() > 0 && s.phase === 'roll') return game.s.player.cls ? 'Level up! Choose a boon.' : 'Choose your class!';
     switch (s.phase) {
       case 'roll': return s.player.webbed ? 'Still tangled in web: this roll is halved. Tap Roll.' : 'Tap Roll (center of the pad) or press Space.';
       case 'choose': {
@@ -343,6 +444,7 @@
         return `Tap the map in a ${s.parity === 'ortho' ? 'straight (orthogonal)' : 'diagonal'} direction. You keep going until your ${s.steps} moves run out or you're blocked.`;
       }
       case 'moving': return 'Moving…';
+      case 'stopPrompt': return `You've moved your die's worth. Stop here, or keep going (${s.move.stepsLeft} more).`;
       case 'redirect': return `Blocked with ${s.move.stepsLeft} move${s.move.stepsLeft > 1 ? 's' : ''} left. Choose a new direction (not straight back the way you came, unless that's the only way).`;
       case 'levelDone': return 'Floor cleared!';
       case 'shop': return 'Welcome to the shop.';
@@ -358,10 +460,11 @@
     runMove();
   }
 
-  // Sling: shoot instead of moving, flash the stone's path, then end the turn.
-  async function shoot(dir) {
+  // Shoot instead of moving (along a direction, or straight at an enemy
+  // within range), flash the shot's path, then end the turn.
+  async function shoot(dir, targetIndex) {
     if (ui.busy) return;
-    const r = game.shoot(dir);
+    const r = targetIndex === undefined ? game.shoot(dir) : game.shootAt(targetIndex);
     if (!r) return;
     ui.aiming = false; ui.preview = null;
     ui.busy = true;
@@ -377,7 +480,7 @@
 
   function toggleAim() {
     if (ui.busy) return;
-    ui.aiming = !ui.aiming && game.canShoot();
+    ui.aiming = !ui.aiming && (game.canShoot() || game.freeTargets().length > 0);
     if (ui.aiming) ui.targeting = false;
     ui.preview = null;
     render();
@@ -397,8 +500,18 @@
     ui.busy = false;
     render();
     if (game.s.phase === 'pickPrompt') { showPickDialog(); return; }
+    if (game.s.phase === 'stopPrompt') return; // waiting for Stop here / Keep going
     save();
     afterPhase();
+  }
+
+  function stopHere() {
+    if (ui.busy || !game.stopMove()) return;
+    render(); save(); afterPhase();
+  }
+  function keepGoing() {
+    if (ui.busy || !game.continueMove()) return;
+    runMove();
   }
 
   // Walking into a locked door with a lock pick: ask before using it.
@@ -429,17 +542,152 @@
   }
 
   function roll() {
-    if (ui.busy || !game.roll()) return;
+    if (ui.busy) return;
+    if (game.levelsOwed() > 0) { afterPhase(); return; } // choose first
+    if (!game.roll()) return;
     ui.rolled = true;
     render();
     save();
   }
 
   function afterPhase() {
+    // Class and level-up choices come first (after their cut-scene).
+    if (game.levelsOwed() > 0 && game.s.phase !== 'dead') { whenScenesDone(showLevelChoice); return; }
     const ph = game.s.phase;
     if (ph === 'levelDone') { recordBest(); setTimeout(showLevelDone, reducedMotion ? 0 : 350); }
     else if (ph === 'dead') { recordBest(); store.del(SAVE_KEY); lastSaved = null; setTimeout(showDead, reducedMotion ? 0 : 500); }
     else if (ph === 'shop') showShop();
+  }
+
+  // ------------------------------------------------------- class & level-up
+  const CLASS_INFO = {
+    fighter: { icon: 'i-cls-fighter', blurb: 'A wall of muscle. No ranged weapon and no spells, but tough and hard-hitting.',
+      perks: [`+${R.CLASSES.fighter.hp} max health`, `+${R.CLASSES.fighter.levelHp} health per level`, 'Boons: +2 health or +1 strength', 'Sells stones and spells for coins'] },
+    wizard: { icon: 'i-cls-wizard', blurb: 'Fragile, but casts spells from slots that recharge every floor, and an endless magic missile.',
+      perks: ['1 spell slot (you pick the spell)', 'Unlimited magic missile', 'Boons: +1 spell slot or +1 range', 'Sells sling stones for coins'] },
+    rogue: { icon: 'i-cls-rogue', blurb: 'Quick and nimble with a sling. Good at locks and dodging mimics.',
+      perks: [`+${R.CLASSES.rogue.hp} max health, +${R.CLASSES.rogue.dex} DEX`, `Sling with ${R.CLASSES.rogue.ammo} stones`, 'Boons: +1 move or +1 range', 'Sells spells for coins'] },
+  };
+  const BOON_ICON = { hp: 'i-sp-maxhp', str: 'i-sp-str', slot: 'i-cls-wizard', range: 'i-missile', move: 'i-cls-rogue' };
+
+  function showLevelChoice() {
+    if (!game || game.levelsOwed() < 1 || game.s.phase === 'dead') return;
+    const p = game.s.player;
+    const done = () => { closeModal(); render(); save(); afterPhase(); };
+    if (!p.cls) {
+      openModal(`
+        <h2>Choose your class</h2>
+        <p>${game.s.stats.kills} kills: you've proven yourself. Pick a path for the rest of the run.</p>
+        <div class="class-cards">
+          ${DC.CLASS_IDS.map((id) => `<button type="button" class="class-card" data-cls="${id}">
+            ${RD.icon(CLASS_INFO[id].icon, 'class-icon')}
+            <span class="name">${R.CLASSES[id].name}</span>
+            <span class="desc">${CLASS_INFO[id].blurb}</span>
+            <ul>${CLASS_INFO[id].perks.map((t) => `<li>${t}</li>`).join('')}</ul></button>`).join('')}
+        </div>`, false);
+      $('#modalBody').querySelectorAll('[data-cls]').forEach((b) => b.addEventListener('click', () => {
+        const id = b.dataset.cls;
+        if (id === 'wizard') pickSpell('Choose the spell for your slot', (sp) => { game.chooseClass('wizard', sp); done(); }, showLevelChoice);
+        else { game.chooseClass(id); done(); }
+      }));
+      return;
+    }
+    const C = R.CLASSES[p.cls], lvl = p.level + 1;
+    openModal(`
+      <h2>Level ${lvl}!</h2>
+      <p>${RD.icon(CLASS_INFO[p.cls].icon, 'inline')} ${C.name} · max health +${C.levelHp}. Choose a boon:</p>
+      <div class="class-cards two">
+        ${game.boonChoices().map((id) => `<button type="button" class="class-card" data-boon="${id}">
+          ${RD.icon(BOON_ICON[id], 'class-icon')}
+          <span class="name">${BOONS[id].name}</span>
+          <span class="desc">${BOONS[id].desc}</span>
+          <span class="muted">${id === 'range' ? `Now ${p.range}` : id === 'move' ? `Now +${p.moveBoost}` : id === 'str' ? `STR ${p.str}` : id === 'hp' ? `Max ${p.maxHp}` : `${p.slots.length} slot${p.slots.length === 1 ? '' : 's'}`}</span></button>`).join('')}
+      </div>`, false);
+    $('#modalBody').querySelectorAll('[data-boon]').forEach((b) => b.addEventListener('click', () => {
+      const id = b.dataset.boon;
+      if (id === 'slot') pickSpell('Choose the spell for your new slot', (sp) => { game.chooseBoon('slot', sp); done(); }, showLevelChoice);
+      else { game.chooseBoon(id); done(); }
+    }));
+  }
+
+  function pickSpell(title, then, back) {
+    openModal(`
+      <h2>${title}</h2>
+      <p class="muted">A slot casts its spell once per floor and recharges when you reach the next one.</p>
+      <div class="legend spell-pick">
+        ${SPELL_ORDER.map((n) => `<button type="button" class="spell-choice" data-pick="${n}">${RD.icon('i-sp-' + n)}<span><b>${SPELLS[n].name}</b>: ${SPELLS[n].desc}</span></button>`).join('')}
+      </div>
+      <div class="row"><button class="btn" type="button" id="pickBack">Back</button></div>`, false);
+    $('#modalBody').querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => then(b.dataset.pick)));
+    $('#pickBack').addEventListener('click', back);
+  }
+
+  // -------------------------------------------------------------- cut-scenes
+  /* Short animations for kills (on the map square), and for mimic ambushes,
+   * level-ups and class choices (over the map). They never hold up the game:
+   * the state has already changed. Tap to skip; turn off in Sound & effects. */
+  const fx = { on: store.get(FX_KEY) !== '0' };
+  ui.scenes = []; ui.scene = null; ui.sceneWaiters = [];
+  const fxEnabled = () => fx.on && !reducedMotion;
+  function queueScene(sc) {
+    if (!fxEnabled()) return;
+    if (sc.type === 'kill') { killFx(sc.at); return; }
+    ui.scenes.push(sc);
+    if (!ui.scene) nextScene();
+  }
+  function killFx(at) {
+    const layer = $('#board .fx-layer');
+    if (!layer) return;
+    const C = RD.C, cx = (at.x + 0.5) * C, cy = (at.y + 0.5) * C;
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'kill-fx' + (at.kind === 'mimic' ? ' big' : ''));
+    g.setAttribute('transform', `translate(${cx} ${cy})`);
+    const rays = [0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<path class="ray" d="M0 -8V-18" transform="rotate(${a})"/>`).join('');
+    g.innerHTML = `<g class="burst">${rays}</g><path class="slash" d="M-14 -14L14 14"/><path class="slash two" d="M14 -14L-14 14"/><circle class="puff" r="10"/>`;
+    layer.appendChild(g);
+    setTimeout(() => g.remove(), 800);
+  }
+  function nextScene() {
+    const el = $('#scene');
+    const sc = ui.scenes.shift();
+    clearTimeout(ui.sceneTimer);
+    if (!sc) {
+      ui.scene = null; el.hidden = true; el.innerHTML = '';
+      const w = ui.sceneWaiters; ui.sceneWaiters = [];
+      w.forEach((fn) => fn());
+      return;
+    }
+    ui.scene = sc;
+    el.innerHTML = sceneSvg(sc);
+    el.hidden = false;
+    ui.sceneTimer = setTimeout(nextScene, sc.type === 'mimic' ? 1500 : 1600);
+  }
+  function skipScene() { if (ui.scene) nextScene(); }
+  function clearScenes() { ui.scenes = []; ui.sceneWaiters = []; if (ui.scene) nextScene(); }
+  function whenScenesDone(fn) { if (ui.scene) ui.sceneWaiters.push(fn); else fn(); }
+  function sceneSvg(sc) {
+    const use = (id, x, y, w, color) => `<use href="#${id}" x="${x}" y="${y}" width="${w}" height="${w}"${color ? ` style="color:${color}"` : ''}/>`;
+    const rays = Array.from({ length: 12 }, (_, i) => `<path d="M0 -70V-150" transform="rotate(${i * 30})"/>`).join('');
+    let body = '';
+    if (sc.type === 'mimic') {
+      const door = sc.at.kind === 'door', color = RD.COLORS[sc.at.color];
+      body = `<g class="sc-shake">
+          <g class="sc-before">${use(door ? 'i-mimic-lock' : 'i-mimic', -60, -60, 120, color)}</g>
+          <g class="sc-after">${use(door ? 'i-mimic-door' : 'i-mimic-open', -75, -75, 150, color)}</g>
+        </g>
+        <text class="sc-title bad" y="112">MIMIC!</text>
+        <text class="sc-sub" y="140">${sc.at.dodged ? 'You twist away' : 'It bites deep'}: ${sc.at.dmg} damage</text>`;
+    } else if (sc.type === 'levelUp') {
+      body = `<g class="sc-rays">${rays}</g>
+        <g class="sc-pop">${use(sc.cls ? 'i-levelup' : 'i-cls-base', -55, -70, 110)}</g>
+        <text class="sc-title" y="92">${sc.cls ? `LEVEL ${sc.level}` : 'CHOOSE YOUR PATH'}</text>`;
+    } else if (sc.type === 'class') {
+      body = `<g class="sc-rays">${rays}</g>
+        <g class="sc-pop">${use('i-cls-' + sc.cls, -60, -75, 120)}</g>
+        <text class="sc-title" y="92">${R.CLASSES[sc.cls].name.toUpperCase()}</text>`;
+    }
+    return `<svg viewBox="-200 -170 400 340" class="scene-svg sc-${sc.type}" aria-hidden="true">
+      <rect class="sc-bg" x="-200" y="-170" width="400" height="340"/>${body}</svg>`;
   }
 
   function castSpell(name) {
@@ -488,7 +736,8 @@
     $('#slingBtn').addEventListener('click', toggleAim);
     $('#soundBtn').addEventListener('click', () => showSound());
     // Browsers only allow sound after a gesture: start audio on the first one.
-    const unlock = () => AU.unlock();
+    let asked = false;
+    const unlock = () => { AU.unlock(); if (!asked) { asked = true; askPersist(); } };
     document.addEventListener('pointerdown', unlock, true);
     document.addEventListener('keydown', unlock, true);
     renderSoundBtn();
@@ -506,10 +755,13 @@
     // Listen on the whole map area so taps just outside the drawn map count too.
     const boardWrap = board.parentElement;
     boardWrap.addEventListener('click', (e) => {
+      const fs = e.target.closest('[data-shoot]');
+      if (fs && ui.aiming) { shoot(null, Number(fs.dataset.shoot)); return; }
       const t = e.target.closest('[data-target]');
       if (t && ui.targeting) {
         if (game.fireball(Number(t.dataset.target))) ui.targeting = false;
         render(); save();
+        if (game.levelsOwed() > 0) afterPhase();
         return;
       }
       if (ui.targeting) return;
@@ -548,9 +800,10 @@
       : '<button type="button" class="pad-center" id="padCenter" disabled>·</button>').join('');
     pad.addEventListener('click', (e) => {
       if (e.target.closest('#padCenter')) {
-        const mode = $('#padCenter').dataset.mode;
+        const mode = $('#padCenter').dataset.mode.replace('+lvl', '');
         if (mode === 'roll') roll();
         else if (mode === 'pass' && game.passTurn()) { render(); save(); }
+        else if (mode === 'stop') stopHere();
         return;
       }
       const b = e.target.closest('[data-dir]');
@@ -564,6 +817,9 @@
         ${RD.icon('i-sp-' + n)}<span class="count">0</span></button>`).join('') +
       `<button type="button" class="spell torch-btn" id="torchBtn" title="Torch: light it on a dark floor to see up to ${R.TORCH_RADIUS} squares away until the floor ends." aria-label="Light a torch">
         ${RD.icon('i-torch')}<span class="count">0</span></button>`;
+    $('#stopBtn').addEventListener('click', stopHere);
+    $('#keepBtn').addEventListener('click', keepGoing);
+    $('#scene').addEventListener('click', skipScene);
     $('#dice').addEventListener('click', (e) => {
       const b = e.target.closest('[data-die]');
       if (b && !b.disabled && !ui.busy && game.pickDie(+b.dataset.die)) render();
@@ -580,6 +836,11 @@
       if (!$('#modal').hidden) {
         if (e.key === 'Escape' && modalDismissable) closeModal();
         return;
+      }
+      if (ui.scene && (e.key === ' ' || e.key === 'Enter' || e.key === 'Escape')) { e.preventDefault(); skipScene(); return; }
+      if (game.s.phase === 'stopPrompt' || (game.s.phase === 'redirect' && game.canStop())) {
+        if (e.key === 'x' || e.key === 'X' || e.key === 'Backspace') { e.preventDefault(); stopHere(); return; }
+        if (game.s.phase === 'stopPrompt' && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); keepGoing(); return; }
       }
       if (e.key === ' ' || e.key === 'Enter' || e.key === 'r') {
         if (game.s.phase === 'roll') { e.preventDefault(); roll(); }
@@ -617,7 +878,9 @@
   function showStart(fromMenu) {
     const savedLoad = Game.fromSave(parseJson(store.get(SAVE_KEY)));
     const saved = savedLoad.game ? store.get(SAVE_KEY) : null;
-    const savedFloor = savedLoad.game ? savedLoad.game.s.floor : 0;
+    const savedFloor = savedLoad.game ? floorName(savedLoad.game.s).toLowerCase() : '';
+    const tutPref = store.get(TUTORIAL_KEY);
+    const playTut = tutPref === null ? !best() : tutPref === '1';
     const b = best();
     openModal(`
       <h2>Dice Delve</h2>
@@ -626,9 +889,9 @@
       ${b ? `<p class="muted">Deepest floor reached: ${b}</p>` : ''}
       <h3>Seed</h3>
       <input type="text" id="seedInput" placeholder="Leave blank for a random dungeon" maxlength="40" autocomplete="off">
-      <label class="check"><input type="checkbox" id="skipTut"> Skip tutorial (start on floor 4)</label>
+      <label class="check"><input type="checkbox" id="playTut" ${playTut ? 'checked' : ''}> Play the tutorial first <span class="muted">(3 short practice floors that don't count)</span></label>
       <div class="row">
-        ${saved && !fromMenu ? `<button class="btn primary" id="continueBtn" type="button">Continue (floor ${savedFloor})</button>` : ''}
+        ${saved && !fromMenu ? `<button class="btn primary" id="continueBtn" type="button">Continue (${savedFloor})</button>` : ''}
         <button class="btn ${saved && !fromMenu ? '' : 'primary'}" id="newBtn" type="button">New game</button>
         <button class="btn" id="loadBtn" type="button">Load game</button>
         <button class="btn" id="rulesBtn" type="button">Rules</button>
@@ -640,7 +903,11 @@
       if (r.game) { startWith(r.game); } else { store.del(SAVE_KEY); showStart(); }
     });
     $('#loadBtn').addEventListener('click', () => showSaves(() => showStart(fromMenu)));
-    const newGame = () => startWith(Game.create($('#seedInput').value, $('#skipTut').checked ? { startFloor: 4 } : undefined));
+    const newGame = () => {
+      const tut = $('#playTut').checked;
+      store.set(TUTORIAL_KEY, tut ? '1' : '0');
+      startWith(Game.create($('#seedInput').value, { tutorial: tut }));
+    };
     $('#newBtn').addEventListener('click', newGame);
     $('#seedInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') newGame(); });
     $('#rulesBtn').addEventListener('click', () => showHelp(() => showStart(fromMenu)));
@@ -652,6 +919,7 @@
     ui.journalSeen = g.s.logSeq || 0;
     ui.toastSeq = (g.s.logSeq || 1) - 1;
     ui.hintQueue = []; ui.hintFloor = null; ui.hintsReady = true;
+    clearScenes();
     closeModal();
     render();
     save();
@@ -669,7 +937,7 @@
   }
   const writeSlots = (list) => store.set(SLOTS_KEY, JSON.stringify(list));
   const checkpoint = () => (game && game.s.phase !== 'dead' ? game.s.checkpoint : null);
-  const defaultName = () => `Floor ${checkpoint().floor} · ${game.s.seedText}`;
+  const defaultName = () => `${checkpoint().tutorial ? 'Tutorial' : 'Floor'} ${checkpoint().floor} · ${game.s.seedText}`;
   const when = (t) => { try { return new Date(t).toLocaleString(); } catch (e) { return ''; } };
   const CODE_PREFIX = 'DD2.';
   function encodeCode(cp) {
@@ -695,7 +963,7 @@
       const m = sl.meta || {};
       return `<li class="slot">
         <div class="slot-info"><span class="slot-name">${esc(String(sl.name || 'Save'))}</span>
-          <span class="muted">Start of floor ${esc(String(m.floor))} · ${esc(String(m.hp))}/${esc(String(m.maxHp))} hp · ${esc(String(m.coins))} coins · ${esc(when(sl.savedAt))}</span></div>
+          <span class="muted">Start of ${m.tutorial ? 'tutorial' : 'floor'} ${esc(String(m.floor))} · ${esc(String(m.hp))}/${esc(String(m.maxHp))} hp · ${esc(String(m.coins))} coins · ${esc(when(sl.savedAt))}</span></div>
         <div class="slot-actions">
           <button class="btn" type="button" data-slot-load="${esc(sl.id)}">Load</button>
           ${cp ? `<button class="btn" type="button" data-slot-over="${esc(sl.id)}">Overwrite</button>` : ''}
@@ -706,6 +974,7 @@
       <h2>Saved games</h2>
       ${message ? `<p class="notice ${message.bad ? 'bad' : ''}">${esc(message.text)}</p>` : ''}
       <p class="muted">Saves record the start of a floor. Your game also saves automatically each time you reach a new floor.</p>
+      <p class="muted">Storage: ${storageInfo.persisted ? 'persistent (the browser won\'t clear it to free space)' : 'may be cleared by the browser'}, with a backup copy kept in a second browser store. Clearing site data removes both, so keep a save code or file for anything important.</p>
       ${cp ? `<h3>Save this game</h3>
         ${midFloor ? `<p class="muted">This saves the start of floor ${cp.floor}. Progress on this floor so far isn't included.</p>` : ''}
         <div class="save-row"><input type="text" id="slotName" maxlength="40" value="${esc(defaultName())}" aria-label="Save name">
@@ -740,7 +1009,7 @@
       const i = list.findIndex((sl) => sl.id === id);
       if (i < 0 && list.length >= MAX_SLOTS) return again(`All ${MAX_SLOTS} slots are full. Overwrite or delete one first.`, true);
       const c = checkpoint();
-      const entry = { id, name, savedAt: Date.now(), meta: { floor: c.floor, hp: c.player.hp, maxHp: c.player.maxHp, coins: c.player.coins }, save: c };
+      const entry = { id, name, savedAt: Date.now(), meta: { floor: c.floor, tutorial: !!c.tutorial, hp: c.player.hp, maxHp: c.player.maxHp, coins: c.player.coins }, save: c };
       if (i >= 0) list[i] = entry; else list.push(entry);
       if (!writeSlots(list)) return again('Could not save: browser storage is full or blocked. Use a save code or file instead.', true);
       again(`Saved "${name}".`);
@@ -835,26 +1104,35 @@
         ${legend('i-moon', 'Dark floor (from floor 6, never two in a row): you only see the squares next to you. Seen walls stay sketched; deeper down you stop remembering items (floor 20+) and then walls too (floor 35+). Seen stairs always stay marked.')}
         ${legend('i-torch', `Torch: every dark floor has one you can reach without keys. It lights at once and lets you see ${R.TORCH_RADIUS} squares (walls block light) until the floor ends. Torches bought in the shop are carried; tap the torch button to light one on a dark floor.`)}
         ${legend('i-darkchest', 'Dark chest: on every dark floor. Chest coins plus a random spell.')}
-        ${legend('i-sling', `Sling: after rolling and picking a die, shoot instead of moving. The stone travels up to your die's number, in its direction type, and hits the first enemy for 1 damage, then your turn ends. You start with ${R.START_AMMO} stones.`)}
+        ${legend('i-sling', "Sling (Rogue): after rolling and picking a die, shoot instead of moving. The stone travels up to your die's number, in its direction type, and hits the first enemy for 1 damage, then your turn ends.")}
+        ${legend('i-missile', "Magic missile (Wizard): works like the sling but never runs out. With a range boost, Rogues and Wizards can also shoot any visible enemy within that many steps directly.")}
         ${legend('i-body', 'Body: enemies killed in melee or by the sling leave one. Walk over it to collect 1–2 sling stones. Fireball leaves nothing.')}
         ${legend('i-stalker', `Stalker (floor ${R.STALKER_FROM}+): after each turn, if it can see you it moves one square closer, attacking when adjacent. On dark floors it sees you only within 2 squares, or from anywhere while your torch is lit.`)}
         ${legend('i-mimic-open', `Mimic (floor ${R.MIMIC_FROM}+): some chests and locked doors are monsters. Touch one and it ambushes you: d20 + DEX ≥ ${R.MIMIC_DODGE} takes normal damage, otherwise double, and your move stops. It has twice an enemy's health and never moves. Killing it gives twice a chest's coins plus a random spell.`)}
         ${legend('i-lockpick', 'Lock pick: walk into a locked door without its key and you can try the lock: d20 + DEX vs. gold 12, crimson 14, azure 16, emerald 18. Used up either way; failure stops your move. DEX +1 is always for sale in the shop.')}
       </div>
+      <h3>Your hero, classes and levels</h3>
+      <p>You start as a plain hero: ${R.START_HP} health, STR 1, DEX 1, no ranged weapon and no spells. After <b>${R.FIRST_LEVEL_KILLS} kills</b> you choose a class. Each later level needs 1.5× as many kills as the one before (${[2, 3, 4].map((n) => R.levelThreshold(n)).join(', ')}… kills in total), adds health and lets you pick a boon.</p>
+      <div class="legend">
+        ${legend('i-cls-fighter', `<b>Fighter</b>: +${R.CLASSES.fighter.hp} max health, +${R.CLASSES.fighter.levelHp} per level. No ranged weapon, no spells. Boons: +${R.BOON_HP} max health or +1 strength.`)}
+        ${legend('i-cls-wizard', '<b>Wizard</b>: 1 spell slot (recharges each floor) and an unlimited magic missile. Boons: +1 spell slot or +1 range.')}
+        ${legend('i-cls-rogue', `<b>Rogue</b>: +${R.CLASSES.rogue.hp} max health, +${R.CLASSES.rogue.dex} DEX, a sling with ${R.CLASSES.rogue.ammo} stones. Boons: +1 move (slide up to die + boost, stopping anywhere from the die's value) or +1 range.`)}
+      </div>
+      <p class="muted">Stones and spells a class can't use are sold for coins (before choosing, you keep them). Shops only offer what your class can use.</p>
       <h3>Shops</h3>
-      <p>Floor 5 is always a shop. After that a shop turns up every 4 to 10 floors, never more than twice in 10 floors. Heal and Strength +1 are always on sale, plus 4 random offers: Max Health +2, Gamble, or spells.</p>
-      <h3>Spells</h3>
+      <p>Floor 5 is always a shop. After that a shop turns up every 4 to 10 floors, never more than twice in 10 floors. Heal, Strength +1 and Dexterity +1 are always on sale, plus 4 random offers your class can use: Max Health +2, Gamble, a torch, a lock pick, sling stones (Rogues) or spells (Wizards).</p>
+      <h3>Spells (Wizards)</h3>
       <div class="legend">
         ${SPELL_ORDER.map((n) => legend('i-sp-' + n, `<b>${SPELLS[n].name}</b>: ${SPELLS[n].desc}`)).join('')}
       </div>
       <h3>Controls</h3>
-      <p class="muted">Tap Roll in the middle of the direction pad. Then tap anywhere on the map in the direction you want to go (the nearest allowed direction is used), or tap an arrow on the pad. The Journal button keeps a log of everything that happened. Keyboard: Space/Enter: roll · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too.</p>
+      <p class="muted">Tap Roll in the middle of the direction pad. Then tap anywhere on the map in the direction you want to go (the nearest allowed direction is used), or tap an arrow on the pad. The Journal button keeps a log of everything that happened. Keyboard: Space/Enter: roll · [ ]: pick a die · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too · X: stop here (move boost).</p>
       <h3>Saving</h3>
-      <p>The game saves a checkpoint each time you reach a new floor. A checkpoint holds your seed, the floor, your stats, coins and spells. The floor itself is rebuilt from the seed, so loading always restarts that floor from its beginning (same layout, same dice). Progress inside a floor isn't saved. Use <b>Saves</b> for named save slots, a copyable save code, or a save file.</p>
+      <p>The game saves a checkpoint each time you reach a new floor. A checkpoint holds your seed, the floor, your stats, class, coins and spells. The floor itself is rebuilt from the seed, so loading always restarts that floor from its beginning (same layout, same dice). Progress inside a floor isn't saved. Use <b>Saves</b> for named save slots, a copyable save code, or a save file.</p>
       <h3>Sound</h3>
-      <p>Sound effects and ambient music are generated in your browser and start after your first tap. Open <b>Sound</b> in the menu to set volumes, or press <b>M</b> to mute.</p>
+      <p>Sound effects and ambient music are generated in your browser and start after your first tap. Open <b>Sound</b> in the menu to set volumes, turn cut-scenes on or off, or press <b>M</b> to mute. Tap a cut-scene to skip it.</p>
       <h3>Tutorial and hints</h3>
-      <p>Floors 1 to 3 are a short tutorial: one room, then two rooms with webs, then a small dungeon with every feature. You can skip it from the New game screen. Hint pop-ups explain each new thing the first time you meet it.</p>
+      <p>The tutorial is 3 practice floors that don't count: one room, then two rooms with webs, then a small dungeon with every feature. Turn it on or off on the New game screen. Floors 1 to 10 have bigger rooms and simpler layouts. Hint pop-ups explain each new thing the first time you meet it.</p>
       <div class="row">
         <button class="btn" type="button" id="hintsToggle">${hintState.off ? 'Turn hints on' : 'Turn hints off'}</button>
         <button class="btn primary" type="button" id="helpClose">Got it</button>
@@ -870,11 +1148,12 @@
 
   function showLevelDone() {
     const sm = game.s.summary;
+    const next = sm.nextTutorial ? `Tutorial ${sm.next}/3 awaits.` : sm.tutorial ? 'The tutorial is over: the real dungeon begins at floor 1.' : `Floor ${sm.next} awaits.`;
     openModal(`
-      <h2>Floor ${sm.floor} cleared!</h2>
+      <h2>${sm.tutorial ? `Tutorial ${sm.floor}/3 complete!` : `Floor ${sm.floor} cleared!`}</h2>
       <div class="hero">${RD.icon('i-stairs')}</div>
       <p>You found the stairs in ${sm.turns} turn${sm.turns === 1 ? '' : 's'}.</p>
-      <p>${sm.nextIsShop ? 'You hear a merchant humming below…' : `Floor ${sm.next} awaits.`}</p>
+      <p>${sm.nextIsShop ? 'You hear a merchant humming below…' : next}</p>
       <div class="row"><button class="btn primary" type="button" id="descendBtn">Descend</button></div>`, false);
     $('#descendBtn').addEventListener('click', () => {
       game.nextFloor();
@@ -888,7 +1167,8 @@
     openModal(`
       <h2>You have fallen</h2>
       <div class="hero">${RD.icon('i-enemy')}</div>
-      <p>Floor reached: <b>${s.floor}</b> · Floors cleared: ${s.stats.floorsCleared}</p>
+      <p>Reached: <b>${floorName(s)}</b> · Floors cleared: ${s.stats.floorsCleared}</p>
+      <p>${s.player.cls ? `${R.CLASSES[s.player.cls].name}, level ${s.player.level}` : 'Base hero, no class yet'}</p>
       <p>Enemies slain: ${s.stats.kills} · Coins earned: ${s.stats.coins} · Turns: ${s.turn}</p>
       <p class="muted">Seed "${esc(s.seedText)}" · Deepest ever: ${best()}</p>
       <div class="row">
@@ -1019,8 +1299,11 @@
   }
 
   // -------------------------------------------------------------------- boot
-  function boot() {
+  async function boot() {
     applyTheme(store.get(THEME_KEY));
+    // Wait briefly for the IndexedDB backup (it never blocks for long).
+    await Promise.race([restoreMirror().catch(() => {}), new Promise((r) => setTimeout(r, 600))]);
+    try { if (navigator.storage && navigator.storage.persisted) storageInfo.persisted = await navigator.storage.persisted(); } catch (e) { /* not supported */ }
     $('#sprites').innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"><defs>${RD.SYMBOLS}</defs></svg>`;
     setupInput();
     const saved = store.get(SAVE_KEY);

@@ -98,6 +98,40 @@
     <circle cx="16" cy="10" r="2.6" style="fill:#8f8a7c;${ink}" stroke-width="1.2"/>
   </symbol>
 
+  <symbol id="i-missile" viewBox="0 0 32 32">
+    <path d="M4 28L15 17" style="fill:none;stroke:#b48cff;stroke-linecap:round;stroke-dasharray:2 3" stroke-width="2.6"/>
+    <path d="M22 4l2.2 5.6L30 10l-4.6 3.8L27 20l-5-3.4L17 20l1.6-6.2L14 10l5.8-.4Z" style="fill:#b48cff;${ink}" stroke-width="1.5"/>
+    <circle cx="22" cy="12" r="2" style="fill:#fff"/>
+  </symbol>
+
+  <symbol id="i-cls-base" viewBox="0 0 32 32">
+    <circle cx="16" cy="10" r="5.5" style="fill:#f1c9a5;${ink}" stroke-width="1.8"/>
+    <path d="M6 29Q6 17 16 17Q26 17 26 29Z" style="fill:#8f8a7c;${ink}" stroke-width="1.8"/>
+  </symbol>
+
+  <symbol id="i-cls-fighter" viewBox="0 0 32 32">
+    <path d="M16 3L27 7V15C27 22 22 27 16 30C10 27 5 22 5 15V7Z" style="fill:#c8372d;${ink}" stroke-width="2"/>
+    <path d="M16 6V27M9 13H23" style="fill:none;stroke:#f4e9d0;stroke-linecap:round" stroke-width="2.6"/>
+  </symbol>
+
+  <symbol id="i-cls-wizard" viewBox="0 0 32 32">
+    <path d="M16 2L24 24H8Z" style="fill:#5b3fa8;${ink}" stroke-width="2"/>
+    <path d="M4 25Q16 20 28 25Q16 30 4 25Z" style="fill:#5b3fa8;${ink}" stroke-width="2"/>
+    <path d="M14 10l1 2.4 2.6.2-2 1.7.6 2.5-2.2-1.4-2.2 1.4.6-2.5-2-1.7 2.6-.2Z" style="fill:#ffd23f"/>
+    <circle cx="18.5" cy="19" r="1.4" style="fill:#ffd23f"/>
+  </symbol>
+
+  <symbol id="i-cls-rogue" viewBox="0 0 32 32">
+    <path d="M5 14Q16 2 27 14L24 18Q16 12 8 18Z" style="fill:#2f5d3a;${ink}" stroke-width="2"/>
+    <path d="M8 18Q16 12 24 18L22 26Q16 30 10 26Z" style="fill:#2f5d3a;${ink}" stroke-width="2"/>
+    <path d="M11 19.5h3.5M17.5 19.5H21" style="fill:none;stroke:#ffd23f;stroke-linecap:round" stroke-width="2.2"/>
+  </symbol>
+
+  <symbol id="i-levelup" viewBox="0 0 32 32">
+    <path d="M16 3L26 14H20V22H12V14H6Z" style="fill:#ffd23f;${ink}" stroke-width="2"/>
+    <path d="M9 26H23M11 29.5H21" style="fill:none;stroke:#ffd23f;stroke-linecap:round" stroke-width="2.4"/>
+  </symbol>
+
   <symbol id="i-lockpick" viewBox="0 0 32 32">
     <circle cx="9" cy="23" r="5" style="fill:#c9ccd3;${ink}" stroke-width="1.8"/>
     <circle cx="9" cy="23" r="1.8" style="fill:var(--paper);stroke:var(--ink)" stroke-width="1"/>
@@ -346,6 +380,11 @@
         out += `<rect class="target" data-target="${i}" x="${o.x * C + 1.5}" y="${o.y * C + 1.5}" width="${C - 3}" height="${C - 3}" rx="6"/>`;
       }
     } else if (ui.aiming && !ui.busy) {
+      // Range boost: enemies close enough to shoot directly.
+      for (const i of game.freeTargets()) {
+        const o = L.objects[i];
+        out += `<rect class="target free" data-shoot="${i}" x="${o.x * C + 1.5}" y="${o.y * C + 1.5}" width="${C - 3}" height="${C - 3}" rx="6"/>`;
+      }
       for (const d of game.shotDirs()) {
         const ax = p.x + DC.DIRS[d][0], ay = p.y + DC.DIRS[d][1];
         out += `<g class="arrow aim" data-dir="${d}" transform="translate(${center(ax)} ${center(ay)})">
