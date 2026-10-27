@@ -16,7 +16,7 @@
   const FX_KEY = 'dicedelve-fx-v1';
   const PAD_ORDER = ['NW', 'N', 'NE', 'W', null, 'E', 'SW', 'S', 'SE'];
   const ANGLE = { E: 0, SE: 45, S: 90, SW: 135, W: 180, NW: 225, N: 270, NE: 315 };
-  const SPELL_ORDER = ['reroll', 'luck', 'noclip', 'invis', 'fireball'];
+  const SPELL_ORDER = ['reroll', 'invis', 'orb'];
   const KEYMAP = {
     ArrowUp: 'N', ArrowDown: 'S', ArrowLeft: 'W', ArrowRight: 'E',
     w: 'N', s: 'S', a: 'W', d: 'E', q: 'NW', e: 'NE', z: 'SW', c: 'SE',
@@ -25,7 +25,7 @@
   const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   let game = null;
-  const ui = { busy: false, targeting: false, preview: null, boardKey: null, rolled: false, journalSeen: 0, toastSeq: 0 };
+  const ui = { busy: false, preview: null, boardKey: null, rolled: false, journalSeen: 0, toastSeq: 0 };
   // Journal entries of these kinds also pop up briefly over the map: status
   // changes (webs, torches), item pickups and combat. Everything else
   // (blocked moves, spells, floor notes) stays in the journal only.
@@ -188,14 +188,15 @@
     portal: { icon: 'i-portal', title: 'Portals', text: 'Step into a portal and you come out of its matching twin, still moving in the same direction.' },
     dark: { icon: 'i-moon', title: 'A dark floor', text: "You can only see the squares next to you. Every dark floor has a torch you can reach without keys. Pick it up to see 4 squares around you. There's also a dark chest with a free spell." },
     shoot: { icon: 'i-sling', title: 'Ranged attacks', text: 'After rolling and picking a die you can <b>shoot instead of moving</b>: tap the ranged button, then a direction. The shot flies as far as your chosen die in a straight or diagonal line (same as your move) and hits the first enemy for 1 damage. Rogues use sling stones (collect more from bodies); a Wizard\'s magic missile never runs out.' },
-    hero: { icon: 'i-cls-base', title: 'Your hero', text: `You start plain: ${R.START_HP} health, no ranged weapon and no spells. After <b>${R.FIRST_LEVEL_KILLS} kills</b> you choose a class: Fighter, Wizard or Rogue. Stones and spells you find before then are kept for later.` },
+    hero: { icon: 'i-cls-base', title: 'Your hero', text: `You start plain: ${R.START_HP} health, no ranged weapon and no spells. After <b>${R.FIRST_LEVEL_KILLS} kills</b> you choose a class: Fighter, Wizard or Rogue. Stones you find before then are kept for later, and spell charges can be cast (${R.CHARGES_PER_CAST} per cast).` },
     level: { icon: 'i-levelup', title: 'Levels', text: 'More kills bring more levels: each one needs 1.5× as many kills as the last. Every level adds health and lets you pick one of two boons for your class. The bar next to your class shows your progress.' },
     freeaim: { icon: 'i-missile', title: 'Range', text: 'With a range boost, enemies within that many steps (counting straight squares) glow when you aim. Tap one to shoot it directly, in any direction, whatever the dice say. Farther enemies still need a shot along the die\'s direction.' },
     stop: { icon: 'i-cls-rogue', title: 'Fleet foot', text: 'With a move boost you slide your die plus the boost. Once you have moved at least the die\'s number, you can tap <b>Stop here</b> on any square, or keep going.' },
     stalker: { icon: 'i-stalker', title: 'Stalkers', text: 'These hooded enemies hunt you. After each of your turns, a stalker that can see you moves one square closer, and attacks if it is next to you. On dark floors they spot you only up close, unless your torch is lit, which they can see from anywhere.' },
     mimic: { icon: 'i-mimic-open', title: 'Mimic!', text: "Deep in the dungeon, some chests and locked doors are monsters in disguise. When one wakes it bites first: d20 + DEX of 12 or more takes a normal bite, anything less doubles it. It has double an enemy's health and never moves. Kill it for twice a chest's coins plus a random spell. Look closely: a mimic shows tiny teeth at its seam." },
     lockpick: { icon: 'i-lockpick', title: 'Lock picks', text: "With a lock pick, walking into a locked door you don't have the key for lets you try the lock: d20 + DEX must reach the door's number (gold 12, crimson 14, azure 16, emerald 18). Buy DEX in the shop to get better at it." },
-    spells: { icon: 'i-sp-fireball', title: 'You have a spell', text: 'Spells sit in the bar under the direction pad. Tap one to use it. Hover or long-press to read what it does, or open <b>Rules</b>.' },
+    spells: { icon: 'i-sp-orb', title: 'Spells', text: `There are three spells: Re-roll, Invisibility and Glowing Orb. They sit in the bar under the direction pad. Anyone can cast a spell at level 1 by spending <b>${R.CHARGES_PER_CAST} charges</b> (found in dark chests and mimic hoards). Wizards learn spells instead, cast them at their own level (up to 5), and study charges to level them up.` },
+    spellbook: { icon: 'i-cls-wizard', title: 'Your spellbook', text: 'As a Wizard you can cast any spell you know, a few times per floor (more casts at levels 2, 4 and 8). Tap your class badge in the top bar to open your spellbook: spend 5× the next level in charges of a spell to level it up.' },
   };
   const hintState = (() => {
     try { const v = JSON.parse(store.get(HINTS_KEY) || '{}'); return { off: !!v.off, seen: v.seen && typeof v.seen === 'object' ? v.seen : {} }; }
@@ -228,7 +229,8 @@
     if (L && L.objects.some((o) => o.type === 'enemy' && o.mimic && !o.done)) queueHint('mimic');
     if (s.phase === 'choose' && s.dice && s.die !== null) queueHint(s.parity === 'ortho' ? 'even' : 'odd');
     if (s.phase === 'redirect') queueHint('blocked');
-    if (s.player.cls === 'wizard') queueHint('spells');
+    if (s.player.cls === 'wizard') queueHint('spellbook');
+    if (DC.SPELL_IDS.some((k) => s.player.spells[k] >= R.CHARGES_PER_CAST || s.player.known[k])) queueHint('spells');
     if (s.player.level >= 2) queueHint('level');
     if (s.phase === 'choose' && game.canShoot()) queueHint('shoot');
     if (s.phase === 'choose' && game.freeTargets().length) queueHint('freeaim');
@@ -264,7 +266,7 @@
     const prog = Math.max(0, Math.min(1, (s.stats.kills - lo) / (hi - lo)));
     $('#stats').innerHTML = `
       <span class="stat" title="${s.tutorial ? 'Tutorial floor (does not count)' : 'Floor'}">${RD.icon('i-stairs')}<b>${floorName(s)}</b></span>
-      <span class="stat cls-stat" title="${C ? C.name : 'Base hero'}, level ${p.level}: ${s.stats.kills} kills, next level at ${hi}">${RD.icon('i-cls-' + (p.cls || 'base'))}<b>${C ? 'Lv ' + p.level : 'Hero'}</b>
+      <span class="stat cls-stat${p.cls === 'wizard' ? ' clickable' : ''}" ${p.cls === 'wizard' ? 'role="button" tabindex="0" id="spellbookBtn"' : ''} title="${C ? C.name : 'Base hero'}, level ${p.level}: ${s.stats.kills} kills, next level at ${hi}">${RD.icon('i-cls-' + (p.cls || 'base'))}<b>${C ? 'Lv ' + p.level : 'Hero'}</b>
         <span class="xpbar"><span style="width:${(100 * prog).toFixed(0)}%"></span></span></span>
       <span class="stat" title="Health">${RD.icon('i-heart')}<b>${p.hp}/${p.maxHp}</b>
         <span class="hpbar"><span style="width:${(100 * p.hp) / p.maxHp}%"></span></span></span>
@@ -331,7 +333,7 @@
     const canAim = () => game.canShoot() || game.freeTargets().length > 0;
     if (ui.aiming && !canAim()) ui.aiming = false;
     const legal = ui.busy ? [] : game.availableDirs();
-    const dirs = ui.targeting ? [] : ui.aiming ? game.shotDirs() : legal;
+    const dirs = ui.aiming ? game.shotDirs() : legal;
     // Ranged button: the Rogue's sling or the Wizard's magic missile.
     const sling = $('#slingBtn'), p = s.player;
     const ranged = p.cls === 'rogue' || p.cls === 'wizard';
@@ -350,8 +352,8 @@
     // The pad's center is the Roll button, becomes Pass when no move is
     // legal, and otherwise shows the moves left.
     const center = $('#padCenter');
-    const canRoll = !ui.busy && !ui.targeting && s.phase === 'roll';
-    const canPass = !ui.busy && !ui.targeting && !ui.aiming && s.phase === 'choose' && s.die !== null && legal.length === 0;
+    const canRoll = !ui.busy && s.phase === 'roll';
+    const canPass = !ui.busy && !ui.aiming && s.phase === 'choose' && s.die !== null && legal.length === 0;
     const mode = canRoll ? 'roll' : canPass ? 'pass' : canStop ? 'stop' : 'count';
     const modeKey = mode + (game.levelsOwed() > 0 ? '+lvl' : '');
     if (center.dataset.mode !== modeKey || mode === 'count') {
@@ -369,18 +371,23 @@
       }
     }
 
-    // Only Wizards cast; slots and charges both count.
+    // Spells: Wizards show each known spell's level; everyone else shows
+    // charges (a cast costs CHARGES_PER_CAST). Active effects are highlighted.
+    const p2 = s.player, wiz = p2.cls === 'wizard';
     document.querySelectorAll('#spells [data-spell]').forEach((b) => {
       const name = b.dataset.spell;
-      const n = game.spellCount(name);
-      b.hidden = s.player.cls !== 'wizard';
-      const armed = (name === 'noclip' || name === 'invis') && s.armed[name];
-      const active = armed || (name === 'fireball' && ui.targeting);
-      b.disabled = ui.busy || !(active || game.canCast(name));
-      b.classList.toggle('armed', active);
-      b.classList.toggle('empty', !n);
-      b.querySelector('.count').textContent = n;
+      const active = (name === 'invis' && s.invis) || (name === 'reroll' && s.rerolls && s.rerolls.left > 0) || (name === 'orb' && s.level && s.level.orbLevel);
+      const usable = game.canCast(name) || (name === 'reroll' && s.rerolls && s.rerolls.left > 0);
+      b.disabled = ui.busy || !usable;
+      b.classList.toggle('armed', !!active);
+      b.classList.toggle('empty', wiz ? !p2.known[name] : p2.spells[name] < R.CHARGES_PER_CAST);
+      b.querySelector('.count').textContent = name === 'invis' && s.invis ? `${s.invis.turns}t` : wiz ? (p2.known[name] ? `L${p2.known[name]}` : '–') : p2.spells[name];
+      const lv = game.castLevel(name);
+      b.title = `${SPELLS[name].name}: ${SPELLS[name].desc}` + (wiz ? (p2.known[name] ? ` Level ${lv}: ${SPELLS[name].at(lv)}.` : ' Not learned yet.') : ` Level 1: ${SPELLS[name].at(1)}. Costs ${R.CHARGES_PER_CAST} charges (you have ${p2.spells[name]}).`);
     });
+    const cl = $('#castsLeft');
+    cl.hidden = !wiz;
+    if (wiz) cl.textContent = `${p2.casts}/${R.wizardSlots(p2.level)} casts`;
 
     const tb = $('#torchBtn');
     tb.disabled = ui.busy || !game.canLightTorch();
@@ -427,7 +434,6 @@
 
   function statusText() {
     const s = game.s;
-    if (ui.targeting) return 'Fireball: tap an obstacle (web, enemy or locked door) to destroy it. Tap the spell again to cancel.';
     if (ui.aiming) {
       const what = s.player.cls === 'wizard' ? 'Magic missile' : 'Sling';
       const free = game.freeTargets().length ? ` Or tap a glowing enemy (within ${s.player.range} steps) to shoot it directly.` : '';
@@ -456,7 +462,7 @@
   // ------------------------------------------------------------------- input
   async function choose(dir) {
     if (ui.aiming) { shoot(dir); return; }
-    if (ui.busy || ui.targeting || !game.choose(dir)) return;
+    if (ui.busy || !game.choose(dir)) return;
     runMove();
   }
 
@@ -481,7 +487,6 @@
   function toggleAim() {
     if (ui.busy) return;
     ui.aiming = !ui.aiming && (game.canShoot() || game.freeTargets().length > 0);
-    if (ui.aiming) ui.targeting = false;
     ui.preview = null;
     render();
   }
@@ -562,13 +567,13 @@
   // ------------------------------------------------------- class & level-up
   const CLASS_INFO = {
     fighter: { icon: 'i-cls-fighter', blurb: 'A wall of muscle. No ranged weapon and no spells, but tough and hard-hitting.',
-      perks: [`+${R.CLASSES.fighter.hp} max health`, `+${R.CLASSES.fighter.levelHp} health per level`, 'Boons: +2 health or +1 strength', 'Sells stones and spells for coins'] },
-    wizard: { icon: 'i-cls-wizard', blurb: 'Fragile, but casts spells from slots that recharge every floor, and an endless magic missile.',
-      perks: ['1 spell slot (you pick the spell)', 'Unlimited magic missile', 'Boons: +1 spell slot or +1 range', 'Sells sling stones for coins'] },
+      perks: [`+${R.CLASSES.fighter.hp} max health`, `+${R.CLASSES.fighter.levelHp} health per level`, 'Boons: +2 health or +1 strength', 'Sells sling stones for coins'] },
+    wizard: { icon: 'i-cls-wizard', blurb: 'Fragile, but learns spells, casts them at higher levels, and has an endless magic missile.',
+      perks: ['Learns 1 spell (you pick)', '1 cast per floor (more at levels 2, 4, 8)', 'Unlimited magic missile', 'Boons: learn/upgrade a spell or +1 range', 'Sells sling stones for coins'] },
     rogue: { icon: 'i-cls-rogue', blurb: 'Quick and nimble with a sling. Good at locks and dodging mimics.',
-      perks: [`+${R.CLASSES.rogue.hp} max health, +${R.CLASSES.rogue.dex} DEX`, `Sling with ${R.CLASSES.rogue.ammo} stones`, 'Boons: +1 move or +1 range', 'Sells spells for coins'] },
+      perks: [`+${R.CLASSES.rogue.hp} max health, +${R.CLASSES.rogue.dex} DEX`, `Sling with ${R.CLASSES.rogue.ammo} stones`, 'Boons: +1 move or +1 range'] },
   };
-  const BOON_ICON = { hp: 'i-sp-maxhp', str: 'i-sp-str', slot: 'i-cls-wizard', range: 'i-missile', move: 'i-cls-rogue' };
+  const BOON_ICON = { hp: 'i-sp-maxhp', str: 'i-sp-str', spell: 'i-cls-wizard', range: 'i-missile', move: 'i-cls-rogue' };
 
   function showLevelChoice() {
     if (!game || game.levelsOwed() < 1 || game.s.phase === 'dead') return;
@@ -587,7 +592,7 @@
         </div>`, false);
       $('#modalBody').querySelectorAll('[data-cls]').forEach((b) => b.addEventListener('click', () => {
         const id = b.dataset.cls;
-        if (id === 'wizard') pickSpell('Choose the spell for your slot', (sp) => { game.chooseClass('wizard', sp); done(); }, showLevelChoice);
+        if (id === 'wizard') pickSpell('Choose your first spell', (sp) => { game.chooseClass('wizard', sp); done(); }, showLevelChoice);
         else { game.chooseClass(id); done(); }
       }));
       return;
@@ -601,21 +606,27 @@
           ${RD.icon(BOON_ICON[id], 'class-icon')}
           <span class="name">${BOONS[id].name}</span>
           <span class="desc">${BOONS[id].desc}</span>
-          <span class="muted">${id === 'range' ? `Now ${p.range}` : id === 'move' ? `Now +${p.moveBoost}` : id === 'str' ? `STR ${p.str}` : id === 'hp' ? `Max ${p.maxHp}` : `${p.slots.length} slot${p.slots.length === 1 ? '' : 's'}`}</span></button>`).join('')}
+          <span class="muted">${id === 'range' ? `Now ${p.range}` : id === 'move' ? `Now +${p.moveBoost}` : id === 'str' ? `STR ${p.str}` : id === 'hp' ? `Max ${p.maxHp}` : DC.SPELL_IDS.filter((k) => p.known[k]).map((k) => `${SPELLS[k].name} ${p.known[k]}`).join(', ')}</span></button>`).join('')}
       </div>`, false);
     $('#modalBody').querySelectorAll('[data-boon]').forEach((b) => b.addEventListener('click', () => {
       const id = b.dataset.boon;
-      if (id === 'slot') pickSpell('Choose the spell for your new slot', (sp) => { game.chooseBoon('slot', sp); done(); }, showLevelChoice);
+      if (id === 'spell') pickSpell('Learn or upgrade a spell', (sp) => { game.chooseBoon('spell', sp); done(); }, showLevelChoice);
       else { game.chooseBoon(id); done(); }
     }));
   }
 
+  // Learn a spell (level 1) or raise a known one; maxed spells are disabled.
   function pickSpell(title, then, back) {
+    const p = game.s.player;
     openModal(`
       <h2>${title}</h2>
-      <p class="muted">A slot casts its spell once per floor and recharges when you reach the next one.</p>
+      <p class="muted">A Wizard casts any spell it knows, up to its casts per floor (they refill on every new floor).</p>
       <div class="spell-pick">
-        ${SPELL_ORDER.map((n) => `<button type="button" class="spell-choice" data-pick="${n}">${RD.icon('i-sp-' + n)}<span><b>${SPELLS[n].name}</b>: ${SPELLS[n].desc}</span></button>`).join('')}
+        ${SPELL_ORDER.map((n) => {
+          const lv = p.known[n] || 0, max = lv >= R.SPELL_MAX;
+          const what = max ? `Level ${lv} (max)` : lv ? `Level ${lv} → ${lv + 1}: ${SPELLS[n].at(lv + 1)}` : `Learn at level 1: ${SPELLS[n].at(1)}`;
+          return `<button type="button" class="spell-choice" data-pick="${n}" ${max ? 'disabled' : ''}>${RD.icon('i-sp-' + n)}<span><b>${SPELLS[n].name}</b>: ${SPELLS[n].desc}<br><span class="muted">${what}</span></span></button>`;
+        }).join('')}
       </div>
       <div class="row"><button class="btn" type="button" id="pickBack">Back</button></div>`, false);
     $('#modalBody').querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => then(b.dataset.pick)));
@@ -692,18 +703,12 @@
 
   function castSpell(name) {
     if (ui.busy) return;
-    if (name === 'fireball') {
-      ui.targeting = !ui.targeting && game.canCast('fireball');
-      if (ui.targeting) ui.aiming = false;
-    } else if (name === 'noclip' || name === 'invis') {
-      game.toggleArm(name);
-    } else if (name === 'reroll' && game.canCast('reroll')) {
-      showReroll();
-      return;
-    } else if (name === 'luck' && game.canCast('luck')) {
-      showLuck();
+    if (name === 'reroll') {
+      if (game.s.rerolls && game.s.rerolls.left > 0) { showReroll(); return; }
+      if (game.cast('reroll')) { render(); save(); showReroll(); }
       return;
     }
+    game.cast(name);
     ui.preview = null;
     render();
     save();
@@ -757,14 +762,6 @@
     boardWrap.addEventListener('click', (e) => {
       const fs = e.target.closest('[data-shoot]');
       if (fs && ui.aiming) { shoot(null, Number(fs.dataset.shoot)); return; }
-      const t = e.target.closest('[data-target]');
-      if (t && ui.targeting) {
-        if (game.fireball(Number(t.dataset.target))) ui.targeting = false;
-        render(); save();
-        if (game.levelsOwed() > 0) afterPhase();
-        return;
-      }
-      if (ui.targeting) return;
       const a = e.target.closest('[data-dir]');
       if (a) { choose(a.dataset.dir); return; }
       // Tap anywhere: move in the direction of the tap.
@@ -778,7 +775,7 @@
     });
     const setPreview = (dir) => {
       let next = null;
-      if (dir && !ui.busy && !ui.targeting) {
+      if (dir && !ui.busy) {
         // Aiming: the stone's path, cut off where you can't see.
         if (ui.aiming) {
           next = [];
@@ -815,8 +812,11 @@
     $('#spells').innerHTML = SPELL_ORDER.map((n) =>
       `<button type="button" class="spell" data-spell="${n}" title="${esc(SPELLS[n].name + ': ' + SPELLS[n].desc)}" aria-label="${esc(SPELLS[n].name)}">
         ${RD.icon('i-sp-' + n)}<span class="count">0</span></button>`).join('') +
+      '<span class="casts-left" id="castsLeft" hidden></span>' +
       `<button type="button" class="spell torch-btn" id="torchBtn" title="Torch: light it on a dark floor to see up to ${R.TORCH_RADIUS} squares away until the floor ends." aria-label="Light a torch">
         ${RD.icon('i-torch')}<span class="count">0</span></button>`;
+    $('#stats').addEventListener('click', (e) => { if (e.target.closest('#spellbookBtn') && !ui.busy && $('#modal').hidden) showSpellbook(); });
+    $('#stats').addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('#spellbookBtn')) { e.preventDefault(); showSpellbook(); } });
     $('#stopBtn').addEventListener('click', stopHere);
     $('#keepBtn').addEventListener('click', keepGoing);
     $('#scene').addEventListener('click', skipScene);
@@ -849,7 +849,7 @@
       }
       if (e.key === 'm' || e.key === 'M') { AU.toggleMute(); renderSoundBtn(); return; }
       if ((e.key === '[' || e.key === ']') && !ui.busy && game.pickDie(e.key === '[' ? 0 : 1)) { render(); return; }
-      if (e.key === 'Escape' && (ui.targeting || ui.aiming)) { ui.targeting = false; ui.aiming = false; render(); return; }
+      if (e.key === 'Escape' && ui.aiming) { ui.aiming = false; render(); return; }
       const dir = KEYMAP[e.key.length === 1 ? e.key.toLowerCase() : e.key];
       if (dir) { e.preventDefault(); choose(dir); }
     });
@@ -884,7 +884,7 @@
     const b = best();
     openModal(`
       <h2>Dice Delve</h2>
-      <div class="hero">${RD.icon('i-start')}${RD.icon('i-sp-luck')}${RD.icon('i-enemy')}${RD.icon('i-chest')}${RD.icon('i-stairs')}</div>
+      <div class="hero">${RD.icon('i-start')}${RD.icon('i-sp-orb')}${RD.icon('i-enemy')}${RD.icon('i-chest')}${RD.icon('i-stairs')}</div>
       <p>A roll-and-write dungeon crawl. Roll two dice, keep one, pick a direction, and slide through procedurally generated floors to reach the staircase.</p>
       ${b ? `<p class="muted">Deepest floor reached: ${b}</p>` : ''}
       <h3>Seed</h3>
@@ -915,7 +915,7 @@
 
   function startWith(g) {
     game = g;
-    ui.boardKey = null; ui.targeting = false; ui.aiming = false; ui.shotFlash = null; ui.preview = null; ui.busy = false;
+    ui.boardKey = null; ui.aiming = false; ui.shotFlash = null; ui.preview = null; ui.busy = false;
     ui.journalSeen = g.s.logSeq || 0;
     ui.toastSeq = (g.s.logSeq || 1) - 1;
     ui.hintQueue = []; ui.hintFloor = null; ui.hintsReady = true;
@@ -1115,15 +1115,16 @@
       <p>You start as a plain hero: ${R.START_HP} health, STR 1, DEX 1, no ranged weapon and no spells. After <b>${R.FIRST_LEVEL_KILLS} kills</b> you choose a class. Each later level needs 1.5× as many kills as the one before (${[2, 3, 4].map((n) => R.levelThreshold(n)).join(', ')}… kills in total), adds health and lets you pick a boon.</p>
       <div class="legend">
         ${legend('i-cls-fighter', `<b>Fighter</b>: +${R.CLASSES.fighter.hp} max health, +${R.CLASSES.fighter.levelHp} per level. No ranged weapon, no spells. Boons: +${R.BOON_HP} max health or +1 strength.`)}
-        ${legend('i-cls-wizard', '<b>Wizard</b>: 1 spell slot (recharges each floor) and an unlimited magic missile. Boons: +1 spell slot or +1 range.')}
+        ${legend('i-cls-wizard', '<b>Wizard</b>: learns 1 spell, casts known spells (1 cast per floor, more at levels 2, 4 and 8) and has an unlimited magic missile. Boons: learn or upgrade a spell, or +1 range.')}
         ${legend('i-cls-rogue', `<b>Rogue</b>: +${R.CLASSES.rogue.hp} max health, +${R.CLASSES.rogue.dex} DEX, a sling with ${R.CLASSES.rogue.ammo} stones. Boons: +1 move (slide up to die + boost, stopping anywhere from the die's value) or +1 range.`)}
       </div>
-      <p class="muted">Stones and spells a class can't use are sold for coins (before choosing, you keep them). Shops only offer what your class can use.</p>
+      <p class="muted">Fighters and Wizards sell sling stones for coins (before choosing a class, you keep them). Everyone keeps spell charges. Shops sell stones only to Rogues, and no longer sell spells.</p>
       <h3>Shops</h3>
-      <p>Floor 5 is always a shop. After that a shop turns up every 4 to 10 floors, never more than twice in 10 floors. Heal, Strength +1 and Dexterity +1 are always on sale, plus 4 random offers your class can use: Max Health +2, Gamble, a torch, a lock pick, sling stones (Rogues) or spells (Wizards).</p>
-      <h3>Spells (Wizards)</h3>
+      <p>Floor 5 is always a shop. After that a shop turns up every 4 to 10 floors, never more than twice in 10 floors. Heal, Strength +1 and Dexterity +1 are always on sale, plus 4 random offers: Max Health +2, Gamble, a torch, a lock pick or sling stones (Rogues only).</p>
+      <h3>Spells</h3>
+      <p>Three spells, each with levels 1 to 5. Anyone can cast a spell at level 1 by spending ${R.CHARGES_PER_CAST} charges of it (charges come from dark chests and mimic hoards). Wizards learn spells, cast any spell they know at its level (${R.WIZARD_SLOT_LEVELS.length} casts per floor at most: one more at Wizard levels ${R.WIZARD_SLOT_LEVELS.join(', ')}), and spend 5 × the next level in charges to level a spell up.</p>
       <div class="legend">
-        ${SPELL_ORDER.map((n) => legend('i-sp-' + n, `<b>${SPELLS[n].name}</b>: ${SPELLS[n].desc}`)).join('')}
+        ${SPELL_ORDER.map((n) => legend('i-sp-' + n, `<b>${SPELLS[n].name}</b>: ${SPELLS[n].desc} ${[1, 2, 3, 4, 5].map((lv) => `<br><span class="muted">Level ${lv}: ${SPELLS[n].at(lv)}</span>`).join('')}`)).join('')}
       </div>
       <h3>Controls</h3>
       <p class="muted">Tap Roll in the middle of the direction pad. Then tap anywhere on the map in the direction you want to go (the nearest allowed direction is used), or tap an arrow on the pad. The Journal button keeps a log of everything that happened. Keyboard: Space/Enter: roll · [ ]: pick a die · Arrows or WASD: straight · Q E Z C: diagonals · Numpad works too · X: stop here (move boost).</p>
@@ -1154,7 +1155,10 @@
       <div class="hero">${RD.icon('i-stairs')}</div>
       <p>You found the stairs in ${sm.turns} turn${sm.turns === 1 ? '' : 's'}.</p>
       <p>${sm.nextIsShop ? 'You hear a merchant humming below…' : next}</p>
-      <div class="row"><button class="btn primary" type="button" id="descendBtn">Descend</button></div>`, false);
+      <div class="row">
+        ${game.s.player.cls === 'wizard' ? '<button class="btn" type="button" id="doneBook">Spellbook</button>' : ''}
+        <button class="btn primary" type="button" id="descendBtn">Descend</button></div>`, false);
+    if ($('#doneBook')) $('#doneBook').addEventListener('click', () => showSpellbook(showLevelDone));
     $('#descendBtn').addEventListener('click', () => {
       game.nextFloor();
       closeModal();
@@ -1233,7 +1237,10 @@
       <h2>Shop · Floor ${s.floor}</h2>
       <p>${RD.icon('i-coin', 'inline')} <b>${p.coins}</b> coins · ${RD.icon('i-heart', 'inline')} ${p.hp}/${p.maxHp} · ${RD.icon('i-sp-str', 'inline')} ${p.str}</p>
       <div class="shop-items">${items}</div>
-      <div class="row"><button class="btn primary" type="button" id="leaveShop">Leave and descend</button></div>`, false);
+      <div class="row">
+        ${p.cls === 'wizard' ? '<button class="btn" type="button" id="shopBook">Spellbook</button>' : ''}
+        <button class="btn primary" type="button" id="leaveShop">Leave and descend</button></div>`, false);
+    if ($('#shopBook')) $('#shopBook').addEventListener('click', () => showSpellbook(showShop));
     const body = $('#modalBody');
     body.querySelectorAll('[data-buy]').forEach((b) => b.addEventListener('click', () => {
       if (game.buy(Number(b.dataset.buy))) { render(); save(); showShop(); }
@@ -1247,42 +1254,51 @@
     $('#leaveShop').addEventListener('click', () => { game.nextFloor(); closeModal(); render(); save(); afterPhase(); });
   }
 
+  // Re-roll: tap a die to roll it again (level 5: pick its face instead).
   function showReroll() {
-    const d = game.s.dice;
+    const s = game.s, r = s.rerolls;
+    if (!r || r.left < 1 || s.phase !== 'choose') { closeModal(); render(); return; }
+    const d = s.dice;
+    const dieCol = (i) => r.choose
+      ? `<div class="die-col"><span>Die ${i + 1}${s.die === i ? ' (in use)' : ''}</span><div class="face-grid">
+          ${[1, 2, 3, 4, 5, 6].map((v) => `<button type="button" class="${d[i] === v ? 'sel' : ''}" data-set="${i}" data-v="${v}" aria-label="Set die ${i + 1} to ${v}">${RD.dieSvg(v)}</button>`).join('')}
+        </div></div>`
+      : `<div class="die-col"><span>Die ${i + 1}${s.die === i ? ' (in use)' : ''}</span><button class="die-btn" type="button" data-die="${i}">${RD.dieSvg(d[i])}</button></div>`;
     openModal(`
-      <h2>Re-roll</h2><p>Choose a die to roll again.</p>
-      <div class="pick-dice">
-        <button class="die-btn" type="button" data-die="0">${RD.dieSvg(d[0])}</button>
-        <button class="die-btn" type="button" data-die="1">${RD.dieSvg(d[1])}</button>
-      </div>
-      <div class="row"><button class="btn" type="button" data-close>Cancel</button></div>`);
-    $('#modalBody').querySelectorAll('[data-die]').forEach((b) => b.addEventListener('click', () => {
-      game.reroll(Number(b.dataset.die));
-      closeModal(); ui.rolled = true; render(); save();
-    }));
+      <h2>Re-roll</h2>
+      <p>${r.choose ? "Choose one die's value." : `Tap a die to roll it again. <b>${r.left}</b> re-roll${r.left > 1 ? 's' : ''} left.`}</p>
+      <div class="pick-dice">${dieCol(0)}${dieCol(1)}</div>
+      <p class="muted">Unused re-rolls are lost once you move or shoot.</p>
+      <div class="row"><button class="btn primary" type="button" id="rerollDone">Done</button></div>`);
+    const again = () => { ui.rolled = true; render(); save(); if (game.s.rerolls && game.s.rerolls.left > 0) showReroll(); else closeModal(); };
+    $('#modalBody').querySelectorAll('[data-die]').forEach((b) => b.addEventListener('click', () => { if (game.rerollDie(Number(b.dataset.die))) again(); }));
+    $('#modalBody').querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => { if (game.setDie(Number(b.dataset.set), Number(b.dataset.v))) again(); }));
+    $('#rerollDone').addEventListener('click', () => { closeModal(); render(); });
   }
 
-  function showLuck() {
-    const pick = game.s.dice.slice();
-    const draw = () => {
-      openModal(`
-        <h2>Dark One's Luck</h2><p>Set each die to any face. Total ${pick[0] + pick[1]}: ${(pick[0] + pick[1]) % 2 ? 'diagonal' : 'orthogonal'}.</p>
-        <div class="pick-dice">
-          ${[0, 1].map((i) => `<div class="die-col"><span>Die ${i + 1}</span><div class="face-grid">
-            ${[1, 2, 3, 4, 5, 6].map((v) => `<button type="button" class="${pick[i] === v ? 'sel' : ''}" data-i="${i}" data-v="${v}" aria-label="Die ${i + 1} to ${v}">${RD.dieSvg(v)}</button>`).join('')}
-          </div></div>`).join('')}
-        </div>
-        <div class="row"><button class="btn primary" type="button" id="luckOk">Bend fate</button><button class="btn" type="button" data-close>Cancel</button></div>`);
-      $('#modalBody').querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', () => {
-        pick[Number(b.dataset.i)] = Number(b.dataset.v);
-        draw();
-      }));
-      $('#luckOk').addEventListener('click', () => {
-        game.darkLuck(pick[0], pick[1]);
-        closeModal(); ui.rolled = true; render(); save();
-      });
-    };
-    draw();
+  // The Wizard's spellbook: levels, charges and upgrades.
+  function showSpellbook(back) {
+    const p = game.s.player;
+    const rows = SPELL_ORDER.map((n) => {
+      const lv = p.known[n], cost = lv && lv < R.SPELL_MAX ? R.upgradeCost(lv + 1) : 0;
+      return `<div class="book-row">
+        ${RD.icon('i-sp-' + n, 'book-icon')}
+        <div class="book-text"><b>${SPELLS[n].name}</b> ${lv ? `· level ${lv}` : '<span class="muted">· not learned</span>'}
+          <span class="muted">${lv ? SPELLS[n].at(lv) : SPELLS[n].desc}</span>
+          <span class="muted">${p.spells[n]} charge${p.spells[n] === 1 ? '' : 's'}${cost ? ` · next level: ${cost} charges (${SPELLS[n].at(lv + 1)})` : lv >= R.SPELL_MAX ? ' · max level' : ''}</span></div>
+        ${cost ? `<button class="btn" type="button" data-up="${n}" ${game.canUpgrade(n) ? '' : 'disabled'}>Study</button>` : ''}
+      </div>`;
+    }).join('');
+    openModal(`
+      <h2>Spellbook</h2>
+      <p>${RD.icon('i-cls-wizard', 'inline')} Level ${p.level} Wizard · <b>${p.casts}</b> of ${R.wizardSlots(p.level)} casts left this floor.</p>
+      <div class="book">${rows}</div>
+      <p class="muted">Study spends charges of a spell you know to raise it a level (level n costs 5 × n charges). You can study before rolling, between floors and in shops. New spells are learned with the Spellcraft boon when you level up.</p>
+      <div class="row"><button class="btn primary" type="button" id="bookClose">${back ? 'Back' : 'Close'}</button></div>`, !back);
+    $('#modalBody').querySelectorAll('[data-up]').forEach((b) => b.addEventListener('click', () => {
+      if (game.upgradeSpell(b.dataset.up)) { render(); save(); showSpellbook(back); }
+    }));
+    $('#bookClose').addEventListener('click', () => (back ? back() : closeModal()));
   }
 
   // ------------------------------------------------------------------- theme

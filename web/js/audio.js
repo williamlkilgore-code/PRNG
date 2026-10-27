@@ -111,6 +111,8 @@
     hit() { noise({ freq: 1100, q: 0.8, dur: 0.1, vol: 0.55 }); tone({ type: 'square', freq: 230, to: 110, dur: 0.12, vol: 0.14, lp: 1600 }); },
     kill() { SFX.hit(); notes([440, 220], 0.1, { type: 'square', dur: 0.14, vol: 0.12, lp: 2000, at: 0.06 }); },
     levelUp() { notes([523, 659, 784, 1047, 1319], 0.08, { type: 'triangle', dur: 0.3, vol: 0.17 }); tone({ freq: 1568, dur: 0.6, vol: 0.06, at: 0.4 }); },
+    spellUp() { notes([659, 880, 1175], 0.07, { type: 'triangle', dur: 0.28, vol: 0.14 }); tone({ freq: 1760, dur: 0.4, vol: 0.05, at: 0.2 }); },
+    orb() { tone({ type: 'sine', freq: 520, to: 1040, dur: 0.6, vol: 0.12, attack: 0.08 }); tone({ type: 'triangle', freq: 780, to: 1560, dur: 0.5, vol: 0.05, at: 0.06, attack: 0.08 }); },
     classChosen() { notes([392, 523, 659, 784], 0.11, { type: 'square', dur: 0.35, vol: 0.08, lp: 2400 }); notes([196, 262], 0.22, { type: 'triangle', dur: 0.5, vol: 0.14 }); },
     mimic() { noise({ filter: 'highpass', freq: 1800, dur: 0.05, vol: 0.6 });
       tone({ type: 'sawtooth', freq: 240, to: 60, dur: 0.3, vol: 0.22, lp: 900, at: 0.03 });

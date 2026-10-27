@@ -174,6 +174,14 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .spell-pick { display: flex; flex-direction: column; gap: 6px; }
 .spell-choice { width: 100%; display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px; border: 2px solid var(--ink); border-radius: 10px; background: var(--paper); color: var(--ink); font: inherit; cursor: pointer; }
 .spell-choice:hover { border-color: var(--accent); }
+.spell-choice:disabled { opacity: .5; cursor: default; }
+.cls-stat.clickable { cursor: pointer; border-bottom: 2px dotted currentColor; }
+.casts-left { align-self: center; font-size: 14px; border: 1.5px solid currentColor; border-radius: 6px; padding: 0 6px; }
+.book { display: flex; flex-direction: column; gap: 8px; }
+.book-row { display: flex; gap: 10px; align-items: center; border: 2px solid var(--ink); border-radius: 10px; padding: 8px; background: var(--paper); }
+.book-row .book-icon { width: 34px; height: 34px; flex: none; }
+.book-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.book-text .muted { font-size: 14px; }
 .spell-choice .icon { width: 32px; height: 32px; flex: none; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }
 .toast.log-good { color: var(--good); } .toast.log-bad, .toast.log-fight { color: var(--bad); }
@@ -262,6 +270,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .trail { fill: none; stroke: var(--pencil); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: .75; stroke-dasharray: 1 0; }
 .trail-dot { fill: var(--pencil); opacity: .75; }
 .obj.done { opacity: .45; }
+.obj.remembered { opacity: .4; filter: grayscale(.6); }
 .badge circle { fill: var(--bad); stroke: var(--ink); stroke-width: 1.2; }
 .badge text { fill: #fff; font-family: var(--font); font-size: 10.5px; text-anchor: middle; }
 .player use { transition: none; }

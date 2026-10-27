@@ -264,6 +264,12 @@
     <path d="M9.5 27Q9 20 13.4 17.2A6 6 0 1 1 18.6 17.2Q23 20 22.5 27Z" style="fill:var(--player);fill-opacity:.25;stroke:currentColor;stroke-linejoin:round" stroke-width="2" stroke-dasharray="3 2.4"/>
     <path d="M24 5l1 2.4 2.4 1-2.4 1-1 2.4-1-2.4-2.4-1 2.4-1ZM6 19l.8 1.8 1.8.8-1.8.8L6 24.2l-.8-1.8-1.8-.8 1.8-.8Z" style="fill:currentColor"/>
   </symbol>
+  <symbol id="i-sp-orb" viewBox="0 0 32 32">
+    <circle cx="16" cy="16" r="13" style="fill:#ffe58a;opacity:.35"/>
+    <circle cx="16" cy="16" r="8.5" style="fill:#ffd23f;${ink}" stroke-width="1.8"/>
+    <circle cx="13" cy="13" r="2.6" style="fill:#fff;opacity:.85"/>
+    <path d="M16 2v3M16 27v3M2 16h3M27 16h3M6 6l2 2M24 24l2 2M26 6l-2 2M8 24l-2 2" style="fill:none;stroke:#f08a24;stroke-linecap:round" stroke-width="1.8"/>
+  </symbol>
   <symbol id="i-sp-maxhp" viewBox="0 0 32 32">
     <use href="#i-heart"/>
     <path d="M22 4v8M18 8h8" style="fill:none;stroke:var(--good);stroke-linecap:round" stroke-width="3"/>
@@ -369,17 +375,19 @@
     L.objects.forEach((o, i) => { if (shows(o)) out += objectSvg(o, i); });
 
     if (dark) out += fogLayer(game, memory);
+    // A level 5 Glowing Orb remembers where enemies were last seen.
+    if (dark && L.enemyMemory) {
+      for (const o of L.objects) {
+        if (o.type !== 'enemy' || o.done || !o.lastSeen || lit(o.x, o.y)) continue;
+        out += `<g class="obj remembered">${use(o.stalker ? 'i-stalker' : o.mimic ? (o.mimic === 'door' ? 'i-mimic-door' : 'i-mimic-open') : 'i-enemy', o.lastSeen[0], o.lastSeen[1])}</g>`;
+      }
+    }
     // Stairs stay clearly marked once seen, drawn above the fog.
     if (!dark || lit(L.stairs.x, L.stairs.y) || L.seenStairs) out += use('i-stairs', L.stairs.x, L.stairs.y);
 
-    out += `<g class="player${s.armed.invis ? ' invisible' : ''}${s.armed.noclip ? ' noclip' : ''}${L.torchLit ? ' torchlit' : ''}">${use('i-player', p.x, p.y)}</g>`;
+    out += `<g class="player${s.invis ? ' invisible' : ''}${game.wallWalk() ? ' noclip' : ''}${game.isLit() ? ' torchlit' : ''}">${use('i-player', p.x, p.y)}</g>`;
 
-    if (ui.targeting) {
-      for (const i of game.fireballTargets()) {
-        const o = L.objects[i];
-        out += `<rect class="target" data-target="${i}" x="${o.x * C + 1.5}" y="${o.y * C + 1.5}" width="${C - 3}" height="${C - 3}" rx="6"/>`;
-      }
-    } else if (ui.aiming && !ui.busy) {
+    if (ui.aiming && !ui.busy) {
       // Range boost: enemies close enough to shoot directly.
       for (const i of game.freeTargets()) {
         const o = L.objects[i];
@@ -443,7 +451,7 @@
         <rect x="-10" y="235" width="360" height="40" style="fill:#9c5a22;${ink}" stroke-width="3"/>
         <use href="#i-sp-heal" x="20" y="195" width="44" height="44"/>
         <use href="#i-coin" x="80" y="205" width="34" height="34"/><use href="#i-coin" x="98" y="200" width="34" height="34"/>
-        <use href="#i-sp-fireball" x="230" y="192" width="46" height="46"/>
+        <use href="#i-sp-orb" x="230" y="192" width="46" height="46"/>
         <use href="#i-chest" x="282" y="190" width="50" height="50"/>
       </g>`;
   }

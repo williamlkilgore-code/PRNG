@@ -1175,7 +1175,7 @@
       const p = this.s.player, cost = this.upgradeCost(name);
       p.spells[name] -= cost;
       p.known[name]++;
-      this.emit('levelUp');
+      this.emit('spellUp');
       this.log(`You study ${cost} ${SPELLS[name].name} charges: ${SPELLS[name].name} is now level ${p.known[name]}.`, 'spell');
       return true;
     }
