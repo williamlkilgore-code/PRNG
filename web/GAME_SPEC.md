@@ -14,6 +14,7 @@ This document gives a developer or coding agent enough detail to rebuild Dice De
 > - **A base hero with classes and level-ups** (2.12).
 > - **Cut-scenes** (7).
 > - **Saves mirrored to IndexedDB** (6.5).
+> - **Three levelled spells:** Invisibility, Re-roll and Glowing Orb, at levels 1–5. Fireball, Dark One's Luck and No Clipping are gone (2.7).
 
 The source of truth is the code in `web/js/`. If this document and the code disagree, the code wins. Fix this document in the same change.
 
@@ -53,11 +54,12 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
 | Strength (`str`) | 1 | Damage dealt to an enemy per encounter |
 | Coins | 0 | Spent in shops |
 | Keys | none | Colored keys. Cleared when you enter a new floor |
-| Spells | 0 of each | `noclip`, `fireball`, `luck`, `reroll`, `invis`. Only Wizards can cast (2.12) |
+| Spell charges (`spells`) | 0 of each | `invis`, `reroll`, `orb`. Anyone casts at level 1 for 3 charges; Wizards study them (2.7) |
 | Dexterity (`dex`) | 1 | Added to lock-pick rolls (2.10) |
 | Sling stones (`ammo`) | 0 (`START_AMMO`) | One per Rogue shot (2.10, 2.12) |
 | Class (`cls`), `level` | `null`, 0 | The base hero. A class comes at 10 kills (2.12) |
-| `slots`, `range`, `moveBoost` | `[]`, 0, 0 | The Wizard's spell slots, and the range and move boosts (2.12) |
+| `known`, `casts` | all 0, 0 | The Wizard's spell levels and casts left this floor (2.7) |
+| `range`, `moveBoost` | 0, 0 | The range and move boosts (2.12) |
 | Lock picks (`lockpicks`) | 0 | Used up on every attempt (2.10) |
 | Torches (`torches`) | 0 | Carried torches (2.9) |
 
@@ -67,7 +69,7 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
    - Doubles are picked automatically (`computeSteps()` sets `die = 0`).
    - You can switch dice until you move or shoot.
    - Until a die is chosen, `steps = 0`, `parity = null`, and no direction, shot or pass is allowed.
-   - Re-roll and Dark One's Luck keep the chosen die and recompute.
+   - Re-roll attempts keep the chosen die and recompute.
 2. **Movement points:**
    - Normally `steps = T`.
    - If a web caught you last turn, `steps = max(1, floor(T/2))`.
@@ -124,7 +126,7 @@ All values use the floor number `f`.
 | **Spider web** | Movement stops at once on the web square. The web is used up. Your next roll's movement is halved. |
 | **Enemy** | Has `floor(f/10 + 1)` health. See "Encounters" below. |
 | **Torch** | Only on dark floors (see 2.9). Lights at once when picked up and burns until the floor ends. |
-| **Body** | Left where an enemy dies in melee or to a sling stone (not Fireball). Holds 1–2 sling stones (d2), picked up when you pass over it. |
+| **Body** | Left where an enemy dies in melee or to a stone or missile. Holds 1–2 sling stones (d2), picked up when you pass over it. |
 | **Lock pick** | From floor 4, a floor with a lock has a 30% chance of a lock pick in the start zone. Picked up and carried. |
 | **Stalker** | An enemy with `stalker: true` (floor 12+). It hunts you (2.10). |
 | **Dark chest** | Only on dark floors. Gives the chest's coins plus 1 random spell (one of the 5 kinds, rolled on the floor's dice). |
@@ -159,7 +161,7 @@ All values use the floor number `f`.
 - **Schedule after floor 5.** Each gap between shops is 4–10 floors. There are never more than 2 shops in any 10 consecutive floors, which is the same as `shop[i+2] - shop[i] >= 10`.
   - It is generated this way: `next = prev + randInt(max(4, prev2 + 10 - prev), 10)`, where `prev2` is the shop before `prev`.
 - **Always on sale:** **Heal** (restore to full), **Strength +1** and **Dexterity +1**. All can be bought again and again.
-- **Random offers:** 4 more, drawn without repeats from `maxhp, gamble, noclip, fireball, luck, reroll, invis, torch, ammo, lockpick`. These can each be bought once, except Gamble, which can be played again and again.
+- **Random offers:** 4 more, drawn without repeats from `maxhp, gamble, torch, ammo, lockpick` (stones only for Rogues; spells are never sold). These can each be bought once, except Gamble, which can be played again and again.
 
 **Prices.** `t = floor(f/10)`.
 
@@ -168,11 +170,6 @@ All values use the floor number `f`.
 | Heal (to full) | `2 + ceil((maxHp - hp)/2) + t`. Can't be bought at full health. |
 | Strength +1 | `8 + 4*(str - 1) + 2t` |
 | Max Health +2 | `6 + 2t`. Also raises current health by 2. |
-| Re-roll | `3 + t` |
-| Fireball | `5 + t` |
-| Invisibility | `6 + t` |
-| No Clipping | `7 + t` |
-| Dark One's Luck | `9 + t` |
 | Torch (carried) | `4 + t` |
 | Dexterity +1 | `8 + 4*(dex - 1) + 2t` |
 | Sling stones ×3 | `3 + t` |
@@ -187,17 +184,24 @@ All values use the floor number `f`.
 | 5 | Money back plus 2 (net +2) |
 | 6 | Win double: money back plus twice the wager (net +2 × wager) |
 
-### 2.7 Spells
+### 2.7 Spells (experimental)
 
-| Spell | When | Effect |
-|---|---|---|
-| **Re-roll** | After rolling, before moving | Re-roll one chosen die. Points and direction type are recalculated, and webbed halving still applies. |
-| **Dark One's Luck** | After rolling, before moving | Set both dice to any faces from 1 to 6. |
-| **No Clipping** | Armed during roll, choose or redirect | If the next square is solid, count the run of solid squares `k`. If the square after the run is inside the map, `steps left >= k + 1`, and that square is not an enemy (unless you're invisible), the move passes through the walls. Each wall square costs 1 point. Then you land normally. One charge = one wall crossing. |
-| **Invisibility** | Armed during roll, choose or redirect | Lasts the rest of the turn. Pass through enemies with no encounter. |
-| **Fireball** | During roll, choose or redirect | Destroy any one active web, enemy or locked door on the floor. A burned door becomes an open doorway. |
+There are three spells, each with levels 1 to 5. Their data is `SPELLS` in `game.js`, and `at(lv)` describes a level.
 
-Armed spells cost a charge only if they take effect. An armed but unused spell is disarmed at the end of the turn and keeps its charge.
+| Spell | When | Level x (1–4) | Level 5 |
+|---|---|---|---|
+| **Invisibility** (`invis`) | roll, choose or redirect, if not already invisible | `s.invis = {turns: x, level, wall}`. Enemies are passed through with no encounter, hidden mimics aren't triggered, and stalkers can't see you. The cast turn counts as turn 1, and `finishTurnFlags` counts down. | 5 turns, plus walking through walls: `legalMove` returns `kind: 'noclip'` when the run of solid squares `k` is followed by an in-map square and `steps left ≥ k + 1`. Passing a wall sets `invis.wall`, and the spell ends at the end of that turn. |
+| **Re-roll** (`reroll`) | choose, once per roll | `s.rerolls = {left: x}`. Each `rerollDie(i)` re-rolls one die on the floor's dice, keeping the chosen die. | `setDie(i, v)`: choose one die's value. |
+| **Glowing Orb** (`orb`) | roll, choose or redirect, **dark floors only**, and only if stronger than an orb already cast | `L.orbRadius = rules.orbRadius(x)` = 4, 5, 6 or 7 for the rest of the floor. It works like a torch: walls block it, and the bigger of the torch and orb radius applies. | `L.floodTurns = 2`: every square is visible for 2 turns, then radius 8. `L.enemyMemory`: each enemy seen keeps `lastSeen`, drawn faded when out of sight, for the rest of the floor. |
+
+**Who casts** (`canCast`, `cast`):
+- **Wizards** cast any spell in `player.known` (its level 1–5), using one of `player.casts`.
+  - `casts` refills to `rules.wizardSlots(level)` on every floor: one slot at Wizard levels 1, 2, 4 and 8.
+  - A level-up that gains a slot adds a cast at once.
+- **Everyone else** (the base hero, Fighter, Rogue) casts at level 1 by spending `CHARGES_PER_CAST = 3` charges.
+- **Charges** (`player.spells`) come from dark chests and mimic hoards (one random spell each), and every class keeps them.
+- **Studying** (`upgradeSpell`): a Wizard spends `upgradeCost(n) = 5n` charges of a known spell to raise it to level n. That's 10, 15, 20 and 25 charges. It's allowed in the roll, levelDone and shop phases.
+- **Learning:** a Wizard learns one spell when choosing the class, and the **Spellcraft** boon (`chooseBoon('spell', name)`) learns a spell or raises it by 1.
 
 ### 2.8 Floor content and size
 
@@ -232,14 +236,14 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 | **Memory** | `rules.darkMemory(f)`:<br>• **Floors 6–19, `'full'`:** seen squares stay sketched (dimmed), and seen items stay marked.<br>• **Floors 20–34, `'layout'`:** seen squares stay sketched, but items show only while lit.<br>• **Floor 35+, `'none'`:** nothing is remembered.<br><br>On every dark floor, enemies show only while lit, seen stairs always stay clearly marked, and your own pencil trail is always drawn. |
 | **Torches** | A found torch lights at once. A torch bought in the shop is carried (`player.torches`) and lit with the torch button, only on a dark floor that isn't already lit. A lit torch lasts until the floor ends. |
 | **Rules unchanged** | Movement works the same, so you can walk blind into anything. |
-| **What darkness limits** | The hover preview stops at the first square you can't see. Fireball can only target obstacles you can see. A No Clipping arrow whose landing square is unseen is drawn on the wall instead. |
+| **What darkness limits** | The hover preview stops at the first square you can't see. A level 5 Invisibility wall-walk arrow whose landing square is unseen is drawn on the wall instead. The Glowing Orb (2.7) extends the light. |
 
 ### 2.10 Sling, stalkers and lock picks
 
 | Rule | Detail |
 |---|---|
 | **Shooting** | Only in the `choose` phase (after rolling, before moving), with ammo, as an alternative to moving. `shoot(dir)` uses one of the roll's 4 direction types, and `shotDirs()` lists only directions with at least one open square. The stone flies up to `steps` squares (the chosen die, halved if webbed). It stops before walls and locked doors (and at a corner squeeze), and hits the first enemy for 1 damage. Ammo −1, then the turn ends. A miss still costs the stone. |
-| **Bodies** | `killEnemy(o, dropBody)`. Melee and sling kills push a `body` object with `ammo: d2` onto the enemy's square. Fireball kills don't. |
+| **Bodies** | `killEnemy(o, dropBody)`. Melee, stone and missile kills push a `body` object with `ammo: d2` onto the enemy's square. |
 | **Stalkers** | `rules.stalkerCount(f)` = 0 below floor 12, then `min(3, 1 + floor((f − 12)/8))`. `levelgen` flags that many of the placed enemies as `stalker`, chosen at random. |
 | **Stalker turns** | `endTurn()` calls `moveStalkers()` after every turn except reaching the stairs. Each stalker that **sees** you moves 1 square toward you: the step that most reduces Chebyshev distance, then Manhattan distance, preferring straight steps. It never enters walls, locks, webs, items or other enemies, and obeys the corner rule. If it's already next to you, it attacks instead: the same `encounter()` as melee (it deals floor damage, you hit back with STR, and a kill leaves a body). |
 | **Stalker sight** | `stalkerSees(o)`: a clear line of sight (`lineOfSight`). On a dark floor without your torch lit, only within 2 squares. With your torch lit, from any distance. |
@@ -252,7 +256,7 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 
 **The base hero** has 7 health, STR 1 and DEX 1. It has no ranged weapon (`canShoot()` is false) and can't cast. Stones and spells it finds are kept for later.
 
-**Kills and levels.** Every kill counts, whatever the source: melee, a stalker fight, a stone or missile, or Fireball.
+**Kills and levels.** Every kill counts, whatever the source: melee, a stalker fight, or a stone or missile.
 - `rules.killsForLevel(n)`: level 1 needs 10 kills, and each later level needs `ceil(previous × 1.5)` more.
 - `levelThreshold(n)` is the total: 10, 25, 48, 83, 136…
 - `levelForKills(k)` turns a kill count into a level.
@@ -264,21 +268,18 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 | Class | On choosing | Per level | Boons (`chooseBoon(id, spell?)`) |
 |---|---|---|---|
 | Fighter | +5 max health | +2 max health | `hp` (+2 max health) or `str` (+1) |
-| Wizard | 1 spell slot (the player picks its spell) and an unlimited magic missile | +1 | `slot` (another slot, pick its spell) or `range` (+1) |
+| Wizard | Learns 1 spell (the player picks it), 1 cast per floor, and an unlimited magic missile | +1 (a cast slot at levels 2, 4 and 8) | `spell` (learn or upgrade a spell; dropped once all are at 5) or `range` (+1) |
 | Rogue | +2 max health, +2 DEX, 5 stones | +1 | `move` (+1) or `range` (+1) |
 
 Each level-up adds the class's per-level health, and current health goes up by the same amount.
 
 **What each class can use** (`canUse(kind)`):
-- **Spells:** only a Wizard casts. `canCast()` needs `cls === 'wizard'`, and a cast uses a ready **slot** of that spell first, then a carried charge (`spendSpell`).
-  - Slots recharge in `enterFloor`.
-  - `spellCount(name)` = charges + ready slots.
+- **Spells:** see 2.7. Wizards cast from known spells and `casts`, and everyone else from charges.
 - **Ranged:** `hasRanged()` is a Wizard (no ammo needed) or a Rogue with stones.
 - **Unusable loot is sold:**
-  - Fighters and Rogues sell spells for `spellCoinValue(f) = 2 × coinValue(f)` each (from dark chests and mimic hoards).
   - Fighters and Wizards sell stones for 1 coin each (from bodies).
   - Anything already held is sold when the class is chosen (`sellUnusable`).
-- **Shops:** `makeShop` offers spells only to Wizards and stones only to Rogues. The base hero gets neither.
+- **Shops:** `makeShop` never offers spells, and offers stones only to Rogues.
 
 **Move boost (Rogue).** `choose()` makes the move `steps + moveBoost` long, with `move.extra = moveBoost`.
 - After any square where `stepsLeft ≤ extra` (so at least the die's value has been moved), `step()` switches the phase to `stopPrompt`.
@@ -296,12 +297,12 @@ Each level-up adds the class's per-level health, and current health goes up by t
 |---|---|
 | **Where** | Normal floors from `MIMIC_FROM = 19`. `levelgen` rolls `MIMIC_CHANCE = 0.3` once per floor, so there is never more than 1 mimic per floor. It picks a kind at random from the kinds that have a candidate, then one candidate. |
 | **Chest mimic** | One of the floor's ordinary `chest` objects (never a dark chest) becomes `type: 'mimic'`. |
-| **Door mimic** | A `lock` with `mimic: true` and no key, placed in an empty, unlocked doorway. That doorway is never on the only route anywhere: blocking it leaves every other floor square connected. With the real locks and this doorway closed, every key and the torch are still reachable. Its color is one of the floor's real lock colors (or a random one if there are none). Until it wakes it behaves exactly like a lock: it's solid, blocks light, stops shots, and can be Fireballed. |
+| **Door mimic** | A `lock` with `mimic: true` and no key, placed in an empty, unlocked doorway. That doorway is never on the only route anywhere: blocking it leaves every other floor square connected. With the real locks and this doorway closed, every key and the torch are still reachable. Its color is one of the floor's real lock colors (or a random one if there are none). Until it wakes it behaves exactly like a lock: it's solid, blocks light and stops shots. |
 | **The tell** | The hidden sprites (`i-mimic`, `i-mimic-lock`) match the real ones except for tiny teeth at the seam. |
 | **Waking** | Walking onto a chest mimic (unless Invisibility is armed: you slip past and it stays hidden). Walking into a door mimic with a key of its color (the key is kept). Choosing **Pick the lock** on it (the pick is kept, and there's no pick roll). |
 | **Ambush** | `ambushMimic(o)`: d20 + DEX against `MIMIC_DODGE = 12`. If you reach it, you take `enemyDamage(f)`; otherwise twice that. The object becomes `{type: 'enemy', mimic: 'chest'\|'door', hp: maxHp: 2 × enemyHealth(f)}` on the same square. You stop on the square before it, and the turn ends (or you die). |
-| **Fight** | After that it is an ordinary enemy that never moves: melee, sling and Fireball all work. It draws as `i-mimic-open` or `i-mimic-door`. |
-| **Reward** | `mimicReward(o)`, from `killEnemy()` and `fireball()`: `2 × (coinValue + sum of bonusDice d6)` coins plus 1 random spell. Melee and sling kills also leave the usual body. Fireball on a still-hidden door mimic also counts as a kill and gives the reward. A dead door mimic is drawn as an open doorway. |
+| **Fight** | After that it is an ordinary enemy that never moves: melee, sling and missile all work. It draws as `i-mimic-open` or `i-mimic-door`. |
+| **Reward** | `mimicReward(o)`, from `killEnemy()`: `2 × (coinValue + sum of bonusDice d6)` coins plus 1 random spell charge, and the usual body. A dead door mimic is drawn as an open doorway. |
 
 ---
 
@@ -408,7 +409,7 @@ Neighboring rooms share a one-square wall, which gives the "graph paper" look. E
 **What `step()` does, in order:**
 1. Check `legalMove`.
 2. If the move is illegal, switch to `redirect`, or end the turn if no direction is available.
-3. If it's a No Clipping move, walk through the walls, adding them to the trail, and spend the charge.
+3. If it's a wall-walk (level 5 Invisibility), walk through the walls, adding them to the trail, and mark the spell to end this turn.
 4. Spend 1 point.
 5. Resolve an enemy or locked door on the target square.
 6. Call `moveTo`.
@@ -450,11 +451,11 @@ Neighboring rooms share a one-square wall, which gives the "graph paper" look. E
 
 | Phase | Allowed actions |
 |---|---|
-| `roll` | Roll, Fireball, arm No Clipping or Invisibility |
-| `choose` | Pick a die (`pickDie(i)`, required before anything below), choose a direction, Pass (only when no direction is legal), Re-roll, Dark One's Luck, Fireball, arm spells |
+| `roll` | Roll, cast Invisibility or Glowing Orb, study spells (Wizard) |
+| `choose` | Pick a die (`pickDie(i)`, required before anything below), choose a direction, Pass (only when no direction is legal), cast any spell (Re-roll: then `rerollDie`/`setDie`) |
 | `moving` | Nothing (the UI is animating) |
 | `choose` (extra) | Shoot with the sling (`shoot(dir)`) instead of moving |
-| `redirect` | Choose a direction, Fireball, arm spells, `stopMove()` when `canStop()` |
+| `redirect` | Choose a direction, cast Invisibility or Glowing Orb, `stopMove()` when `canStop()` |
 | `stopPrompt` | `stopMove()` or `continueMove()` (move boost, 2.12) |
 | `roll` (level owed) | `chooseClass()` / `chooseBoon()` first: `roll()` refuses while `levelsOwed() > 0` |
 | `pickPrompt` | `pickLock()` or `declinePick()` (a slide reached a pickable door) |
@@ -474,14 +475,15 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   seedText: 'moss-rune-42', seed: <uint32>,
   floor: 1, tutorial: false, turn: 0, floorStartTurn: 0,
   phase: 'roll',              // see 4.5
-  player: { x, y, hp, maxHp, str, coins, keys: ['gold'], webbed: false, torches: 0, ammo: 3, dex: 1, lockpicks: 0,
-            spells: { noclip, fireball, luck, reroll, invis },
-            cls: null|'fighter'|'wizard'|'rogue', level: 0, slots: [{ spell, ready }], range: 0, moveBoost: 0 },
+  player: { x, y, hp, maxHp, str, coins, keys: ['gold'], webbed: false, torches: 0, ammo: 0, dex: 1, lockpicks: 0,
+            spells: { invis, reroll, orb },              // spell charges
+            cls: null|'fighter'|'wizard'|'rogue', level: 0, range: 0, moveBoost: 0,
+            known: { invis, reroll, orb }, casts: 0 },   // Wizard spell levels and casts left this floor
+  invis: { turns, level, wall } | null, rerolls: { left, choose } | null,
   diceState: <uint32>,        // dice RNG state
   dice: [d1, d2] | null, steps: 0, parity: 'ortho'|'diag', halved: false,
   usedDirs: ['E', 'S'],       // directions taken this turn
   move: { dir, stepsLeft, extra } | null,   // extra = move boost (2.12)
-  armed: { noclip: false, invis: false }, invisUsed: false,
   level: Level | null,        // null on shop floors
   shop: { floor, items: [{ id, sold }], lastGamble } | null,
   log: [{ text, kind, turn }],// newest last, capped at 60
@@ -504,6 +506,7 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   trail: [[[x, y], ...], ...], // drawn path; a new segment starts after each portal jump
   dark?: true,                 // dark floor (2.9)
   torchLit?, seenStairs?,      // set during play on dark floors
+  orbLevel?, orbRadius?, floodTurns?, enemyMemory?,  // Glowing Orb (2.7)
   seen?: (0|1)[w*h]            // squares ever seen on this floor (dark floors)
 }
 ```
@@ -521,7 +524,7 @@ Every action method in `game.js` returns `false` (or `null`) when it isn't allow
   pair?,          // portal: index of its twin in objects
   done?,          // used up, killed, or opened. Kept so the renderer can cross it out.
   seen?,          // dark floors: has been in sight (for 'full' memory)
-  burned?         // destroyed by Fireball
+  lastSeen?       // enemy: [x, y] last seen (level 5 Glowing Orb)
 }
 ```
 
@@ -573,17 +576,21 @@ Journal entries use the classes `log-<kind>`. Don't use a bare `<kind>`: the `sp
 Everything about a floor (layout, items, enemies, shop stock, dice) comes from the seed and the floor number. So a save stores only what carries between floors:
 
 ```js
-// Checkpoint (CHECKPOINT_VERSION = 3)
+// Checkpoint (CHECKPOINT_VERSION = 4)
 {
-  v: 3,
+  v: 4,
   seedText: 'moss-rune-42',
   floor: 7,                                   // the floor to start
   tutorial: false,                            // true: floor is tutorial 1-3
-  player: { hp, maxHp, str, coins, torches, ammo, dex, lockpicks, spells: { noclip, fireball, luck, reroll, invis },
-            cls, level, slots: ['fireball'], range, moveBoost },
+  player: { hp, maxHp, str, coins, torches, ammo, dex, lockpicks, spells: { invis, reroll, orb },
+            cls, level, known: { invis, reroll, orb }, range, moveBoost },
+  // known: levels 0-5, non-zero only (and at least one) for a Wizard. casts is not saved: it refills on load.
   // torches, ammo, dex, lockpicks and the class fields are optional; older saves get defaults (the base hero).
   // A level must match the class (0 with no class) and can't exceed levelForKills(stats.kills).
   // Version 2 saves load too: their floors 1-3 become tutorial floors, and later floors move up by 3.
+  // Version 3 saves (five single-use spells) convert: invis and reroll charges are kept, fireball, luck and
+  // noclip charges are sold for spellCoinValue each, and a Wizard's slots become known spells at level 1
+  // (removed spells become the Orb).
   stats: { kills, coins, floorsCleared },     // optional; score screen only
   turn: 123                                   // optional; turn counter
 }
@@ -774,11 +781,18 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
   - Each class's bonuses, and unusable loot (held and found) is sold.
   - Shops offer only usable items.
   - Boons, and several owed levels at once.
-  - Wizard: slots are used before charges and recharge each floor, and the missile needs no stones.
+  - Wizard: the missile needs no stones.
   - Move boost: the stop prompt comes only after the die's value, Stop and Keep going work, and the full move is die + boost.
   - Range boost: Manhattan distance, line of sight, and stones needed.
-  - Version 3 checkpoints round-trip, and bad class fields are rejected. Version 2 saves convert (floors shift, a class is owed).
+  - Version 4 checkpoints round-trip, and bad class or spell-level fields are rejected. Version 3 saves convert (spells sold or kept, slots become known spells), and version 2 saves convert (floors shift, a class is owed).
   - The random-play simulation makes class and boon choices, free shots and stop or continue decisions. Half its runs start at 40 kills.
+- **Spells (experimental):**
+  - Charges: 3 for a level 1 cast by non-Wizards.
+  - Wizards: known spells only, casts per floor from slots (1, 2, 2, 3, …, 4), refilling each floor, and study costs of 10/15/20/25 with a cap of 5.
+  - Invisibility: x turns, stalkers blind, level 5 wall-walk that ends the spell.
+  - Re-roll: x attempts, level 5 picks a value, attempts expire on moving.
+  - Orb: radius per level, dark floors only, a level 5 flood for 2 turns then radius 8, and remembered enemies.
+  - The simulation casts and studies spells at random.
 - **Early floors:** floors 1–10 have rooms of at least 5×5, at most one lock and no portals before floor 6.
 - **Tutorial floors:** floor 1 is one 5×5 room with the stairs in the opposite corner and no obstacles. Floor 2 is two rooms with webs, none in the start room. Floor 3 is four chained rooms with a lock guarding the stairs (key reachable), plus an enemy, a web and every item, and no portal. Floor 4 uses the normal generator. `startFloor: 4` skips the tutorial.
 - **Dark floors:** the selection rules (never floors 1–5, shops or two in a row, and a sensible frequency); one torch reachable without keys outside the start room, plus one dark chest; vision radius; walls blocking light; memory; stairs staying marked; preview and fireball limited to what you can see; carried, found and shop torches; the torch resetting each floor; torches in checkpoints.
