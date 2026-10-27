@@ -172,7 +172,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .class-card .desc { font-size: 15px; }
 .class-card ul { margin: 4px 0 0; padding-left: 18px; text-align: left; font-size: 14px; }
 .spell-pick { display: flex; flex-direction: column; gap: 6px; }
-.spell-choice { display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px; border: 2px solid var(--ink); border-radius: 10px; background: var(--paper); color: var(--ink); font: inherit; cursor: pointer; }
+.spell-choice { width: 100%; display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px; border: 2px solid var(--ink); border-radius: 10px; background: var(--paper); color: var(--ink); font: inherit; cursor: pointer; }
 .spell-choice:hover { border-color: var(--accent); }
 .spell-choice .icon { width: 32px; height: 32px; flex: none; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -6px); } }

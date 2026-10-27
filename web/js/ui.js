@@ -614,7 +614,7 @@
     openModal(`
       <h2>${title}</h2>
       <p class="muted">A slot casts its spell once per floor and recharges when you reach the next one.</p>
-      <div class="legend spell-pick">
+      <div class="spell-pick">
         ${SPELL_ORDER.map((n) => `<button type="button" class="spell-choice" data-pick="${n}">${RD.icon('i-sp-' + n)}<span><b>${SPELLS[n].name}</b>: ${SPELLS[n].desc}</span></button>`).join('')}
       </div>
       <div class="row"><button class="btn" type="button" id="pickBack">Back</button></div>`, false);
