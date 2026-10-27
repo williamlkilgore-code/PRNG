@@ -108,14 +108,29 @@
     return n;
   };
   rules.CLASSES = {
-    fighter: { name: 'Fighter', hp: 5, dex: 0, ammo: 0, slots: 0, levelHp: 2, boons: ['hp', 'str'] },
-    rogue: { name: 'Rogue', hp: 2, dex: 2, ammo: 5, slots: 0, levelHp: 1, boons: ['move', 'range'] },
-    wizard: { name: 'Wizard', hp: 0, dex: 0, ammo: 0, slots: 1, levelHp: 1, boons: ['slot', 'range'] },
+    fighter: { name: 'Fighter', hp: 5, dex: 0, ammo: 0, levelHp: 2, boons: ['hp', 'str'] },
+    rogue: { name: 'Rogue', hp: 2, dex: 2, ammo: 5, levelHp: 1, boons: ['move', 'range'] },
+    wizard: { name: 'Wizard', hp: 0, dex: 0, ammo: 0, levelHp: 1, boons: ['spell', 'range'] },
   };
   rules.BOON_HP = 2;          // Fighter's health boon
-  // Loot a class can't use turns into coins.
+  // Loot a class can't use turns into coins (stones; old-save spells).
   rules.spellCoinValue = (f) => 2 * rules.coinValue(f);
   rules.STONE_COINS = 1;
+
+  /* Spells: Invisibility, Re-roll and Glowing Orb, each at level 1-5.
+   * Wizards learn spells and cast any known spell, `wizardSlots(level)`
+   * times per floor (a slot at Wizard levels 1, 2, 4 and 8). Everyone else
+   * casts at level 1 by spending 3 charges. A Wizard raises a known spell to
+   * level n by spending 5n charges of it. */
+  rules.SPELL_MAX = 5;
+  rules.CHARGES_PER_CAST = 3;
+  rules.upgradeCost = (n) => 5 * n;
+  rules.WIZARD_SLOT_LEVELS = [1, 2, 4, 8];
+  rules.wizardSlots = (level) => rules.WIZARD_SLOT_LEVELS.filter((l) => level >= l).length;
+  // Glowing Orb light radius: 4, 5, 6, 7, then 8 at level 5 (after flooding
+  // the whole floor with light for ORB_FLOOD_TURNS turns).
+  rules.orbRadius = (lv) => (lv >= 5 ? 8 : rules.TORCH_RADIUS + lv - 1);
+  rules.ORB_FLOOD_TURNS = 2;
 
   DC.rules = rules;
 })(typeof window !== 'undefined' ? window : globalThis);

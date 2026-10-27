@@ -17,21 +17,25 @@
   const DIAG = ['NE', 'SE', 'SW', 'NW'];
   const OPP = { N: 'S', S: 'N', E: 'W', W: 'E', NE: 'SW', SW: 'NE', NW: 'SE', SE: 'NW' };
 
+  // The three spells. `at(lv)` describes what a level does.
   const SPELLS = {
-    noclip: { name: 'No Clipping', desc: 'Arm before or during a move: walk straight through a wall if this move carries you all the way through it.' },
-    fireball: { name: 'Fireball', desc: 'Destroy one obstacle on the floor: a web, an enemy or a locked door.' },
-    luck: { name: "Dark One's Luck", desc: 'After rolling, set both dice to any values you like.' },
-    reroll: { name: 'Re-roll', desc: 'After rolling, re-roll one of the two dice.' },
-    invis: { name: 'Invisibility', desc: 'Arm for one turn: pass through enemies without encountering them.' },
+    invis: { name: 'Invisibility', desc: "Pass through enemies, and they can't see you, for 1 turn per level.",
+      at: (lv) => (lv >= 5 ? '5 turns, and you can walk through a wall (the spell ends that turn)' : `${lv} turn${lv > 1 ? 's' : ''}`) },
+    reroll: { name: 'Re-roll', desc: 'After rolling, re-roll a die: 1 attempt per level.',
+      at: (lv) => (lv >= 5 ? "choose one die's value" : `${lv} re-roll${lv > 1 ? 's' : ''}`) },
+    orb: { name: 'Glowing Orb', desc: 'Dark floors only: light around you for the rest of the floor, like a torch but farther.',
+      at: (lv) => (lv >= 5 ? 'the whole floor lit for 2 turns, then radius 8; enemies you see stay marked' : `light radius ${R.orbRadius(lv)}`) },
   };
-  const SHOP_POOL = ['maxhp', 'gamble', 'noclip', 'fireball', 'luck', 'reroll', 'invis', 'torch', 'ammo', 'lockpick'];
+  const SPELL_IDS = Object.keys(SPELLS);
+  const OLD_SPELL_IDS = ['noclip', 'fireball', 'luck', 'reroll', 'invis']; // checkpoint versions 2-3
+  const SHOP_POOL = ['maxhp', 'gamble', 'torch', 'ammo', 'lockpick'];
   const SHOP_FIXED = ['heal', 'str', 'dex'];
-  const CHECKPOINT_VERSION = 3;
+  const CHECKPOINT_VERSION = 4;
   const CLASS_IDS = ['fighter', 'wizard', 'rogue'];
   const BOONS = {
     hp: { name: 'Toughness', desc: `Max health +${R.BOON_HP}.` },
     str: { name: 'Strength', desc: 'Strength +1: hit enemies harder.' },
-    slot: { name: 'Spell slot', desc: 'One more spell slot (choose its spell). Slots recharge every floor.' },
+    spell: { name: 'Spellcraft', desc: 'Learn a new spell (level 1), or raise a known spell by 1 level (max 5).' },
     range: { name: 'Range', desc: 'Range +1: shoot any enemy within that many steps, in any direction.' },
     move: { name: 'Fleet foot', desc: 'Move +1: you may slide up to 1 extra square and stop anywhere from your die onward.' },
   };
@@ -66,14 +70,17 @@
           x: 0, y: 0, hp: R.START_HP, maxHp: R.START_HP, str: R.START_STR, coins: 0,
           keys: [], webbed: false, torches: 0,
           ammo: R.START_AMMO, dex: 1, lockpicks: 0,
-          spells: { noclip: 0, fireball: 0, luck: 0, reroll: 0, invis: 0 },
+          spells: { invis: 0, reroll: 0, orb: 0 },     // charges
           // Class and level: chosen after the first kills (see rules.js).
-          cls: null, level: 0, slots: [], range: 0, moveBoost: 0,
+          cls: null, level: 0, range: 0, moveBoost: 0,
+          known: { invis: 0, reroll: 0, orb: 0 },      // Wizard spell levels
+          casts: 0,                                    // Wizard casts left this floor
         },
         diceState: 0,
         dice: null, die: null, steps: 0, parity: null, halved: false,
         usedDirs: [], move: null,
-        armed: { noclip: false, invis: false }, invisUsed: false,
+        invis: null,   // { turns, level, wall } while Invisibility is active
+        rerolls: null, // { left, choose } after casting Re-roll
         declinedPicks: [], pickTarget: -1,
         level: null, shop: null,
         log: [], logSeq: 0,
@@ -107,7 +114,7 @@
         player: {
           hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, torches: p.torches,
           ammo: p.ammo, dex: p.dex, lockpicks: p.lockpicks, spells: Object.assign({}, p.spells),
-          cls: p.cls, level: p.level, slots: p.slots.map((sl) => sl.spell), range: p.range, moveBoost: p.moveBoost,
+          cls: p.cls, level: p.level, known: Object.assign({}, p.known), range: p.range, moveBoost: p.moveBoost,
         },
         stats: Object.assign({}, s.stats),
         turn: s.turn,
@@ -119,12 +126,12 @@
       const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
       const obj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
       if (!obj(cp)) return 'not a save';
-      if (cp.v !== CHECKPOINT_VERSION && cp.v !== 2) return 'unsupported save version';
+      if (![2, 3, CHECKPOINT_VERSION].includes(cp.v)) return 'unsupported save version';
       if (typeof cp.seedText !== 'string' || !cp.seedText.trim() || cp.seedText.length > 100) return 'bad seed';
       if (!int(cp.floor, 1, 100000)) return 'bad floor';
       const p = cp.player;
       if (!obj(p) || !int(p.maxHp, 1, 100000) || !int(p.hp, 1, p.maxHp) || !int(p.str, 0, 100000) || !int(p.coins, 0, 1e9)) return 'bad player stats';
-      if (!obj(p.spells) || !Object.keys(SPELLS).every((k) => int(p.spells[k], 0, 10000))) return 'bad spells';
+      if (!obj(p.spells) || !(cp.v >= 4 ? SPELL_IDS : OLD_SPELL_IDS).every((k) => int(p.spells[k], 0, 10000))) return 'bad spells';
       // Optional fields: older saves don't have them and get defaults.
       if (p.torches !== undefined && !int(p.torches, 0, 10000)) return 'bad torches';
       if (p.ammo !== undefined && !int(p.ammo, 0, 10000)) return 'bad ammo';
@@ -140,10 +147,19 @@
       if (!(cls === null || CLASS_IDS.includes(cls))) return 'bad class';
       if (!int(level, 0, 1000) || (level > 0) !== (cls !== null)) return 'bad level';
       if (level > R.levelForKills(cp.stats ? cp.stats.kills : 0)) return 'bad level';
-      const slots = p.slots === undefined ? [] : p.slots;
-      if (!Array.isArray(slots) || slots.length > 100 || !slots.every((k) => typeof k === 'string' && SPELLS[k]) ||
-          (slots.length > 0 && cls !== 'wizard')) return 'bad spell slots';
       if ((p.range !== undefined && !int(p.range, 0, 100)) || (p.moveBoost !== undefined && !int(p.moveBoost, 0, 100))) return 'bad boosts';
+      if (cp.v === 3) {
+        const slots = p.slots === undefined ? [] : p.slots;
+        if (!Array.isArray(slots) || slots.length > 100 || !slots.every((k) => typeof k === 'string' && OLD_SPELL_IDS.includes(k)) ||
+            (slots.length > 0 && cls !== 'wizard')) return 'bad spell slots';
+        return null;
+      }
+      // Version 4: known spell levels (Wizards only; a Wizard knows at least one).
+      if (p.known !== undefined) {
+        if (!obj(p.known) || !SPELL_IDS.every((k) => int(p.known[k], 0, R.SPELL_MAX))) return 'bad spell levels';
+        const n = SPELL_IDS.reduce((a, k) => a + p.known[k], 0);
+        if ((n > 0) !== (cls === 'wizard')) return 'bad spell levels';
+      } else if (cls === 'wizard') return 'bad spell levels';
       return null;
     }
 
@@ -152,30 +168,45 @@
     static fromSave(data) {
       if (data && data.app === 'dice-delve') data = data.save || data.state;
       let cp = data;
-      if (data && data.v === 2) {
-        // Version 2 had no classes, and its floors 1-3 were the tutorial: those
-        // become tutorial floors, and later floors move up by 3.
-        const why = Game.validateCheckpoint(data);
-        if (why) return { error: why };
-        const p = data.player;
-        data = Object.assign({}, data, {
-          v: CHECKPOINT_VERSION, tutorial: data.floor <= 3, floor: data.floor <= 3 ? data.floor : data.floor - 3,
-          player: Object.assign({}, p, { cls: null, level: 0, slots: [], range: 0, moveBoost: 0 }),
-        });
-        cp = data;
-      }
       if (data && data.version === 1 && data.player) {
         // Older full-snapshot save: resume at the start of its current floor
         // (or the next one, if the floor was already finished).
         if (data.phase === 'dead') return { error: 'that run has ended' };
         const p = data.player;
-        const f = data.phase === 'levelDone' ? data.floor + 1 : data.floor;
         cp = {
-          v: CHECKPOINT_VERSION, seedText: data.seedText,
-          tutorial: f <= 3, floor: f <= 3 ? f : f - 3,
-          player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, spells: p.spells, cls: null, level: 0, slots: [], range: 0, moveBoost: 0 },
+          v: 2, seedText: data.seedText,
+          floor: data.phase === 'levelDone' ? data.floor + 1 : data.floor,
+          player: { hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins,
+            spells: Object.fromEntries(OLD_SPELL_IDS.map((k) => [k, (p.spells && p.spells[k]) || 0])) },
           stats: data.stats, turn: data.turn,
         };
+      }
+      if (cp && cp.v === 2) {
+        // Version 2 had no classes, and its floors 1-3 were the tutorial: those
+        // become tutorial floors, and later floors move up by 3.
+        const why = Game.validateCheckpoint(cp);
+        if (why) return { error: why };
+        cp = Object.assign({}, cp, {
+          v: 3, tutorial: cp.floor <= 3, floor: cp.floor <= 3 ? cp.floor : cp.floor - 3,
+          player: Object.assign({}, cp.player, { cls: null, level: 0, slots: [], range: 0, moveBoost: 0 }),
+        });
+      }
+      if (cp && cp.v === 3) {
+        // Version 3 had five single-use spells. Invisibility and Re-roll
+        // charges carry over; the removed spells are sold for coins. A Wizard's
+        // slots become known spells at level 1 (removed ones become the Orb).
+        const why = Game.validateCheckpoint(cp);
+        if (why) return { error: why };
+        const op = cp.player, f = cp.floor;
+        const sold = ['noclip', 'fireball', 'luck'].reduce((a, k) => a + op.spells[k], 0) * R.spellCoinValue(f);
+        const known = { invis: 0, reroll: 0, orb: 0 };
+        if (op.cls === 'wizard') {
+          for (const k of op.slots || []) known[SPELLS[k] ? k : 'orb'] = 1;
+          if (!known.invis && !known.reroll && !known.orb) known.orb = 1;
+        }
+        const player = Object.assign({}, op, { coins: op.coins + sold, spells: { invis: op.spells.invis, reroll: op.spells.reroll, orb: 0 }, known });
+        delete player.slots;
+        cp = Object.assign({}, cp, { v: CHECKPOINT_VERSION, player });
       }
       const why = Game.validateCheckpoint(cp);
       if (why) return { error: why };
@@ -187,11 +218,11 @@
         ammo: cpp.ammo === undefined ? R.START_AMMO : cpp.ammo,
         dex: cpp.dex === undefined ? 1 : cpp.dex,
         lockpicks: cpp.lockpicks || 0,
-        cls: cpp.cls || null, level: cpp.level || 0, slots: (cpp.slots || []).map((spell) => ({ spell, ready: true })),
+        cls: cpp.cls || null, level: cpp.level || 0,
         range: cpp.range || 0, moveBoost: cpp.moveBoost || 0,
       });
       s.tutorial = !!cp.tutorial;
-      for (const k of Object.keys(SPELLS)) p.spells[k] = cp.player.spells[k];
+      for (const k of SPELL_IDS) { p.spells[k] = cpp.spells[k]; p.known[k] = cpp.known ? cpp.known[k] : 0; }
       if (cp.stats) Object.assign(s.stats, { kills: cp.stats.kills, coins: cp.stats.coins, floorsCleared: cp.stats.floorsCleared });
       s.turn = cp.turn || 0;
       g.log(`Resumed seed "${s.seedText}" at ${cp.tutorial ? 'tutorial ' + cp.floor : 'floor ' + cp.floor}.`);
@@ -268,13 +299,12 @@
         return { kind: 'pick', x: nx, y: ny, walls: 0 };
       }
 
-      if (this.s.armed.noclip) {
+      // Level 5 Invisibility: walk through a wall if the move carries you
+      // all the way through it.
+      if (this.wallWalk()) {
         let k = 0, cx = nx, cy = ny;
         while (this.inB(cx, cy) && this.isSolid(cx, cy)) { k++; cx += dx; cy += dy; }
-        if (k >= 1 && this.inB(cx, cy) && stepsLeft >= k + 1) {
-          const o = this.obj(cx, cy);
-          if (!(o && o.type === 'enemy' && !this.s.armed.invis)) return { kind: 'noclip', x: cx, y: cy, walls: k };
-        }
+        if (k >= 1 && this.inB(cx, cy) && stepsLeft >= k + 1) return { kind: 'noclip', x: cx, y: cy, walls: k };
       }
       return null;
     }
@@ -321,14 +351,14 @@
       const s = this.s, p = s.player;
       s.floor = f;
       s.dice = null; s.die = null; s.move = null; s.usedDirs = []; s.halved = false;
-      s.armed = { noclip: false, invis: false }; s.invisUsed = false;
+      s.invis = null; s.rerolls = null;
       s.declinedPicks = []; s.pickTarget = -1;
       p.keys = []; p.webbed = false;
       s.floorStartTurn = s.turn;
       // Dice restart per floor, so a floor replays identically from its checkpoint.
       s.diceState = s.tutorial ? seedFor(s.seedText, 'tutorial-dice', f) : seedFor(s.seedText, 'dice', f);
       s.checkpoint = this.checkpointFor(f);
-      p.slots.forEach((sl) => { sl.ready = true; }); // spell slots recharge every floor
+      if (p.cls === 'wizard') p.casts = R.wizardSlots(p.level); // casts refill every floor
       if (s.tutorial) {
         s.shop = null;
         s.level = DC.generateTutorial(s.seed, f);
@@ -356,26 +386,42 @@
 
     // ---------------------------------------------------------------- vision
     /* On dark floors you see the 8 squares around you, or everything within
-     * TORCH_RADIUS (Chebyshev) with a clear line of sight once a torch is lit.
-     * Seen squares are remembered in level.seen; how much of that memory is
-     * drawn depends on rules.darkMemory(floor). */
+     * TORCH_RADIUS (Chebyshev) with a clear line of sight once a torch is lit,
+     * or the Glowing Orb's radius (L.orbRadius). A level 5 Orb lights the
+     * whole floor for a few turns (L.floodTurns). Seen squares are remembered
+     * in level.seen; how much of that memory is drawn depends on
+     * rules.darkMemory(floor). With L.enemyMemory, seen enemies keep a
+     * lastSeen position. */
     updateVision() {
       const L = this.s.level;
       this.vis = null;
       if (!L || !L.dark) return;
       if (!Array.isArray(L.seen) || L.seen.length !== L.w * L.h) L.seen = new Array(L.w * L.h).fill(0);
       const p = this.s.player;
-      const r = L.torchLit ? R.TORCH_RADIUS : 1;
+      const r = Math.max(L.torchLit ? R.TORCH_RADIUS : 1, L.orbRadius || 0);
       const vis = new Set();
-      for (let y = Math.max(0, p.y - r); y <= Math.min(L.h - 1, p.y + r); y++) {
-        for (let x = Math.max(0, p.x - r); x <= Math.min(L.w - 1, p.x + r); x++) {
-          if (r === 1 || this.lineOfSight(p.x, p.y, x, y)) vis.add(y * L.w + x);
+      if (L.floodTurns > 0) {
+        for (let i = 0; i < L.w * L.h; i++) vis.add(i);
+      } else {
+        for (let y = Math.max(0, p.y - r); y <= Math.min(L.h - 1, p.y + r); y++) {
+          for (let x = Math.max(0, p.x - r); x <= Math.min(L.w - 1, p.x + r); x++) {
+            if (r === 1 || this.lineOfSight(p.x, p.y, x, y)) vis.add(y * L.w + x);
+          }
         }
       }
       for (const i of vis) L.seen[i] = 1;
       if (vis.has(L.stairs.y * L.w + L.stairs.x)) L.seenStairs = true;
-      for (const o of L.objects) if (vis.has(o.y * L.w + o.x)) o.seen = true;
+      for (const o of L.objects) {
+        if (!vis.has(o.y * L.w + o.x)) continue;
+        o.seen = true;
+        if (L.enemyMemory && o.type === 'enemy') o.lastSeen = [o.x, o.y];
+      }
       this.vis = vis;
+    }
+    // Lit beyond your own squares (torch, Orb or flood): stalkers see you from afar.
+    isLit() {
+      const L = this.s.level;
+      return !!(L && (L.torchLit || L.orbRadius || L.floodTurns > 0));
     }
 
     // Bresenham line; squares strictly between the ends must not be solid.
@@ -442,6 +488,7 @@
      * discarded. The chosen die is both the move count and, by its parity,
      * the direction type. Equal dice are chosen automatically. */
     computeSteps() {
+      // (A re-rolled die keeps the player's choice of die.)
       const s = this.s;
       if (s.die === null && s.dice[0] === s.dice[1]) s.die = 0;
       if (s.die === null) { s.parity = null; s.steps = 0; return; }
@@ -463,7 +510,7 @@
       const s = this.s, p = s.player;
       if (s.phase !== 'roll' || this.levelsOwed() > 0) return false;
       s.dice = [this.d(6), this.d(6)];
-      s.die = null;
+      s.die = null; s.rerolls = null;
       this.emit('roll');
       s.halved = p.webbed;
       p.webbed = false;
@@ -479,6 +526,7 @@
       const s = this.s;
       if (!this.availableDirs().includes(dir)) return false;
       if (s.phase === 'choose') {
+        s.rerolls = null;
         // Rogue's move boost: up to `extra` more squares, stopping any time
         // once the die's value has been moved.
         const extra = s.player.cls === 'rogue' ? s.player.moveBoost : 0;
@@ -497,9 +545,12 @@
 
     finishTurnFlags() {
       const s = this.s;
-      if (s.invisUsed) { this.spendSpell('invis'); this.log('Your invisibility fades.', 'spell'); }
-      s.armed = { noclip: false, invis: false };
-      s.invisUsed = false;
+      if (s.invis && (s.invis.wall || --s.invis.turns <= 0)) { s.invis = null; this.log('Your invisibility fades.', 'spell'); }
+      s.rerolls = null;
+      if (s.level && s.level.floodTurns > 0 && --s.level.floodTurns === 0) {
+        this.log("The orb's flood of light fades.", 'spell');
+        this.updateVision();
+      }
       s.move = null;
       s.usedDirs = [];
       s.declinedPicks = [];
@@ -584,23 +635,20 @@
         const [dx, dy] = DIRS[m.dir];
         for (let k = 1; k <= lm.walls; k++) this.moveTo(p.x + dx, p.y + dy);
         m.stepsLeft -= lm.walls;
-        s.armed.noclip = false;
-        this.spendSpell('noclip');
+        s.invis.wall = true; // the spell ends at the end of this turn
         this.emit('spell');
-        this.log('You phase straight through the wall!', 'spell');
+        this.log('Unseen, you slip straight through the wall!', 'spell');
       }
 
       m.stepsLeft -= 1;
       const o = this.obj(lm.x, lm.y);
       // A chest that is really a mimic: it ambushes you (Invisibility slips past
       // unnoticed, and it stays hidden).
-      if (o && o.type === 'mimic' && !s.armed.invis) return this.ambushMimic(o);
+      if (o && o.type === 'mimic' && !s.invis) return this.ambushMimic(o);
       // A fake locked door: touching it with a key wakes it (the key is kept).
       if (o && o.type === 'lock' && o.mimic) return this.ambushMimic(o);
       if (o && o.type === 'enemy') {
-        if (s.armed.invis) {
-          s.invisUsed = true;
-          this.emit('spell');
+        if (s.invis) {
           this.log('You slip past an enemy unseen.', 'spell');
         } else {
           const r = this.encounter(o);
@@ -649,8 +697,7 @@
             const rolls = [];
             for (let i = 0; i < R.bonusDice(f); i++) rolls.push(this.d(6));
             const v = R.coinValue(f) + rolls.reduce((a, b) => a + b, 0);
-            const kinds = Object.keys(SPELLS);
-            const spell = kinds[this.d(kinds.length) - 1];
+            const spell = SPELL_IDS[this.d(SPELL_IDS.length) - 1];
             this.gainCoins(v);
             this.clearObj(o);
             this.log(`Dark chest! ${v} coins and ${this.gainSpell(spell)}.`, 'good');
@@ -780,8 +827,7 @@
       const rolls = [];
       for (let i = 0; i < R.bonusDice(f); i++) rolls.push(this.d(6));
       const v = 2 * (R.coinValue(f) + rolls.reduce((a, b) => a + b, 0));
-      const kinds = Object.keys(SPELLS);
-      const spell = kinds[this.d(kinds.length) - 1];
+      const spell = SPELL_IDS[this.d(SPELL_IDS.length) - 1];
       this.gainCoins(v);
       this.emit('chest');
       this.log(`The mimic's hoard: ${v} coins and ${this.gainSpell(spell)}!`, 'good');
@@ -808,24 +854,17 @@
       const c = this.s.player.cls;
       if (!c) return true;
       if (kind === 'ammo') return c === 'rogue';
-      if (kind === 'spell') return c === 'wizard';
-      return true;
+      return true; // everyone keeps spell charges
     }
     gainSpell(spell) {
-      const s = this.s;
-      if (this.canUse('spell')) { s.player.spells[spell]++; return `a ${SPELLS[spell].name} spell`; }
-      const v = R.spellCoinValue(s.floor);
-      this.gainCoins(v);
-      return `a ${SPELLS[spell].name} scroll you sell for ${v} coins`;
+      this.s.player.spells[spell]++;
+      return `a ${SPELLS[spell].name} charge`;
     }
     // Turn anything the new class can't use into coins.
     sellUnusable() {
       const s = this.s, p = s.player;
       let v = 0;
       if (!this.canUse('ammo') && p.ammo) { v += p.ammo * R.STONE_COINS; p.ammo = 0; }
-      if (!this.canUse('spell')) {
-        for (const k of Object.keys(SPELLS)) { v += p.spells[k] * R.spellCoinValue(s.floor); p.spells[k] = 0; }
-      }
       if (v) { this.gainCoins(v); this.log(`You sell gear your class can't use for ${v} coins.`, 'good'); }
     }
 
@@ -837,7 +876,7 @@
       p.maxHp += C.hp; p.hp += C.hp;
       p.dex += C.dex;
       p.ammo += C.ammo;
-      if (cls === 'wizard') p.slots = [{ spell, ready: true }];
+      if (cls === 'wizard') { p.known[spell] = 1; p.casts = R.wizardSlots(1); }
       this.sellUnusable();
       this.emit('classChosen');
       this.log(`You are now a ${C.name}!`, 'good');
@@ -845,25 +884,29 @@
     }
 
     boonChoices() {
-      const c = this.s.player.cls;
-      return c ? R.CLASSES[c].boons : [];
+      const p = this.s.player, c = p.cls;
+      if (!c) return [];
+      // Spellcraft drops out once every spell is at the top level.
+      return R.CLASSES[c].boons.filter((id) => id !== 'spell' || SPELL_IDS.some((k) => p.known[k] < R.SPELL_MAX));
     }
 
     chooseBoon(id, spell) {
       const s = this.s, p = s.player;
       if (!p.cls || this.levelsOwed() < 1 || !this.boonChoices().includes(id)) return false;
-      if (id === 'slot' && !SPELLS[spell]) return false;
+      if (id === 'spell' && !(SPELLS[spell] && p.known[spell] < R.SPELL_MAX)) return false;
       const gain = R.CLASSES[p.cls].levelHp;
       p.level++;
+      if (p.cls === 'wizard') p.casts += R.wizardSlots(p.level) - R.wizardSlots(p.level - 1); // a new slot is ready at once
       p.maxHp += gain; p.hp = Math.min(p.maxHp, p.hp + gain);
       switch (id) {
         case 'hp': p.maxHp += R.BOON_HP; p.hp += R.BOON_HP; break;
         case 'str': p.str++; break;
-        case 'slot': p.slots.push({ spell, ready: true }); break;
+        case 'spell': p.known[spell]++; break;
         case 'range': p.range++; break;
         case 'move': p.moveBoost++; break;
       }
-      this.log(`Level ${p.level}! Max health +${gain}, ${BOONS[id].name.toLowerCase()}${id === 'slot' ? ` (${SPELLS[spell].name})` : ''}.`, 'good');
+      const what = id === 'spell' ? (p.known[spell] === 1 ? `learned ${SPELLS[spell].name}` : `${SPELLS[spell].name} level ${p.known[spell]}`) : BOONS[id].name.toLowerCase();
+      this.log(`Level ${p.level}! Max health +${gain}, ${what}.`, 'good');
       return true;
     }
 
@@ -950,7 +993,8 @@
     stalkerSees(o) {
       const s = this.s, L = s.level, p = s.player;
       const dist = Math.max(Math.abs(o.x - p.x), Math.abs(o.y - p.y));
-      if (L.dark && !L.torchLit && dist > 2) return false;
+      if (s.invis) return false; // invisible: enemies can't see you
+      if (L.dark && !this.isLit() && dist > 2) return false;
       return this.lineOfSight(o.x, o.y, p.x, p.y);
     }
 
@@ -1038,39 +1082,77 @@
     }
 
     // ----------------------------------------------------------------- spells
-    // Ready slots plus carried charges. Only Wizards can cast.
-    spellCount(name) {
+    /* Wizards cast any known spell at its level, using one of their casts for
+     * this floor. Everyone else casts at level 1 by spending 3 charges. */
+    castLevel(name) {
       const p = this.s.player;
-      return p.spells[name] + p.slots.filter((sl) => sl.spell === name && sl.ready).length;
+      return p.cls === 'wizard' ? p.known[name] : 1;
     }
-    // A cast uses a ready slot first, then a carried charge.
-    spendSpell(name) {
+    canAfford(name) {
       const p = this.s.player;
-      const sl = p.slots.find((x) => x.spell === name && x.ready);
-      if (sl) sl.ready = false;
-      else if (p.spells[name] > 0) p.spells[name]--;
+      if (p.cls === 'wizard') return p.known[name] > 0 && p.casts > 0;
+      return p.spells[name] >= R.CHARGES_PER_CAST;
+    }
+    wallWalk() {
+      return !!(this.s.invis && this.s.invis.level >= R.SPELL_MAX && !this.s.invis.wall);
     }
 
     canCast(name) {
-      const s = this.s;
-      if (!s.level || s.player.cls !== 'wizard' || !(this.spellCount(name) > 0)) return false;
+      const s = this.s, L = s.level;
+      if (!L || !SPELLS[name] || !this.canAfford(name)) return false;
       switch (name) {
-        case 'reroll': case 'luck': return s.phase === 'choose';
-        case 'noclip': case 'invis': return s.phase === 'choose' || s.phase === 'redirect' || s.phase === 'roll';
-        case 'fireball': return ['roll', 'choose', 'redirect'].includes(s.phase) && this.fireballTargets().length > 0;
+        case 'invis': return !s.invis && ['roll', 'choose', 'redirect'].includes(s.phase);
+        case 'reroll': return s.phase === 'choose' && !!s.dice && !s.rerolls;
+        // Only where it helps: a dark floor, and stronger than any orb already cast.
+        case 'orb': return !!L.dark && ['roll', 'choose', 'redirect'].includes(s.phase) && this.castLevel(name) > (L.orbLevel || 0);
       }
       return false;
     }
 
-    reroll(i) {
-      const s = this.s;
-      if (!this.canCast('reroll') || (i !== 0 && i !== 1)) return false;
+    cast(name) {
+      if (!this.canCast(name)) return false;
+      const s = this.s, p = s.player, L = s.level, lv = this.castLevel(name);
+      if (p.cls === 'wizard') p.casts--; else p.spells[name] -= R.CHARGES_PER_CAST;
+      const tag = `${SPELLS[name].name}${p.cls === 'wizard' ? ` (level ${lv})` : ''}`;
+      if (name === 'invis') {
+        s.invis = { turns: lv >= R.SPELL_MAX ? 5 : lv, level: lv, wall: false };
+        this.log(`${tag}: you fade from sight for ${s.invis.turns} turn${s.invis.turns > 1 ? 's' : ''}${lv >= R.SPELL_MAX ? ", and walls can't hold you" : ''}.`, 'spell');
+      } else if (name === 'reroll') {
+        s.rerolls = { left: lv >= R.SPELL_MAX ? 1 : lv, choose: lv >= R.SPELL_MAX };
+        this.log(`${tag}: ${s.rerolls.choose ? "choose a die's value" : `${s.rerolls.left} re-roll${s.rerolls.left > 1 ? 's' : ''}`}.`, 'spell');
+      } else if (name === 'orb') {
+        L.orbLevel = lv;
+        L.orbRadius = R.orbRadius(lv);
+        if (lv >= R.SPELL_MAX) { L.floodTurns = R.ORB_FLOOD_TURNS; L.enemyMemory = true; }
+        this.emit('orb');
+        this.log(`${tag}: ${lv >= R.SPELL_MAX ? 'light floods the whole floor!' : `light reaches ${L.orbRadius} squares.`}`, 'spell');
+        this.updateVision();
+      }
+      this.emit('spell');
+      return true;
+    }
+
+    // Re-roll attempts (after casting Re-roll).
+    rerollDie(i) {
+      const s = this.s, r = s.rerolls;
+      if (s.phase !== 'choose' || !r || r.choose || r.left < 1 || (i !== 0 && i !== 1)) return false;
       const old = s.dice[i];
       s.dice[i] = this.d(6);
-      this.spendSpell('reroll');
+      r.left--;
       this.computeSteps();
       this.emit('roll');
       this.log(`Re-roll: die ${i + 1} ${old} → ${s.dice[i]}.${this.dieSummary()}`, 'spell');
+      return true;
+    }
+    // Level 5 Re-roll: choose a die's value.
+    setDie(i, v) {
+      const s = this.s, r = s.rerolls;
+      if (s.phase !== 'choose' || !r || !r.choose || r.left < 1 || (i !== 0 && i !== 1) || !(Number.isInteger(v) && v >= 1 && v <= 6)) return false;
+      s.dice[i] = v;
+      r.left--;
+      this.computeSteps();
+      this.emit('spell');
+      this.log(`Re-roll: you set die ${i + 1} to ${v}.${this.dieSummary()}`, 'spell');
       return true;
     }
 
@@ -1079,56 +1161,22 @@
       return s.die === null ? ' Pick a die.' : ` Using ${s.dice[s.die]}: move ${s.steps}, ${s.parity === 'ortho' ? 'orthogonal' : 'diagonal'}.`;
     }
 
-    darkLuck(a, b) {
-      const s = this.s;
-      const ok = (v) => Number.isInteger(v) && v >= 1 && v <= 6;
-      if (!this.canCast('luck') || !ok(a) || !ok(b)) return false;
-      s.dice = [a, b];
-      this.spendSpell('luck');
-      this.computeSteps();
-      this.emit('spell');
-      this.log(`Dark One's Luck bends fate: ${a} and ${b}.${this.dieSummary()}`, 'spell');
-      return true;
+    // A Wizard spends 5n charges of a known spell to raise it to level n.
+    upgradeCost(name) {
+      return R.upgradeCost(this.s.player.known[name] + 1);
     }
-
-    // Arm/disarm No Clipping or Invisibility. Charges are spent only when used.
-    toggleArm(name) {
-      const s = this.s;
-      if (name !== 'noclip' && name !== 'invis') return false;
-      if (s.armed[name]) {
-        if (name === 'invis' && s.invisUsed) return false;
-        s.armed[name] = false;
-        return true;
-      }
-      if (!this.canCast(name)) return false;
-      s.armed[name] = true;
-      this.emit('spell');
-      this.log(`${SPELLS[name].name} is ready for this turn.`, 'spell');
-      return true;
+    canUpgrade(name) {
+      const s = this.s, p = s.player;
+      return !!(p.cls === 'wizard' && SPELLS[name] && p.known[name] > 0 && p.known[name] < R.SPELL_MAX &&
+        p.spells[name] >= this.upgradeCost(name) && ['roll', 'levelDone', 'shop'].includes(s.phase));
     }
-
-    fireballTargets() {
-      const L = this.s.level;
-      if (!L) return [];
-      return L.objects.map((o, i) => i).filter((i) => {
-        const o = L.objects[i];
-        return !o.done && (o.type === 'web' || o.type === 'enemy' || o.type === 'lock') && this.isVisible(o.x, o.y);
-      });
-    }
-
-    fireball(index) {
-      const s = this.s;
-      if (!this.canCast('fireball') || !this.fireballTargets().includes(index)) return false;
-      const o = s.level.objects[index];
-      this.clearObj(o);
-      o.burned = true;
-      this.spendSpell('fireball');
-      if (o.type === 'enemy' || o.mimic) this.countKill(o); // no body: nothing left to loot
-      if (o.mimic) this.mimicReward(o);
-      this.updateVision(); // a burned door can open a line of sight
-      const what = o.type === 'lock' ? `the ${o.color} door` : o.type === 'web' ? 'a web' : 'an enemy';
-      this.emit('fireball');
-      this.log(`Fireball! You incinerate ${what}.`, 'spell');
+    upgradeSpell(name) {
+      if (!this.canUpgrade(name)) return false;
+      const p = this.s.player, cost = this.upgradeCost(name);
+      p.spells[name] -= cost;
+      p.known[name]++;
+      this.emit('levelUp');
+      this.log(`You study ${cost} ${SPELLS[name].name} charges: ${SPELLS[name].name} is now level ${p.known[name]}.`, 'spell');
       return true;
     }
 
@@ -1138,7 +1186,7 @@
       // Only offers the current class can use (no spells unless Wizard, no
       // stones unless Rogue).
       const cls = this.s.player.cls;
-      const pool = SHOP_POOL.filter((id) => (SPELLS[id] ? cls === 'wizard' : id === 'ammo' ? cls === 'rogue' : true));
+      const pool = SHOP_POOL.filter((id) => id !== 'ammo' || cls === 'rogue');
       const random = rng.shuffle(pool).slice(0, 4);
       return { floor: f, items: [...SHOP_FIXED, ...random].map((id) => ({ id, sold: false })), lastGamble: null };
     }
@@ -1149,11 +1197,6 @@
         case 'heal': return p.hp >= p.maxHp ? 0 : 2 + Math.ceil((p.maxHp - p.hp) / 2) + t;
         case 'str': return 8 + 4 * (p.str - R.START_STR) + 2 * t;
         case 'maxhp': return 6 + 2 * t;
-        case 'noclip': return 7 + t;
-        case 'fireball': return 5 + t;
-        case 'luck': return 9 + t;
-        case 'reroll': return 3 + t;
-        case 'invis': return 6 + t;
         case 'torch': return 4 + t;
         case 'dex': return 8 + 4 * (p.dex - 1) + 2 * t;
         case 'ammo': return 3 + t;
@@ -1185,10 +1228,6 @@
         case 'dex': p.dex++; this.log(`Dexterity increased to ${p.dex}.`, 'shop'); break;
         case 'ammo': p.ammo += 3; it.sold = true; this.log('Bought 3 sling stones.', 'shop'); break;
         case 'lockpick': p.lockpicks++; it.sold = true; this.log('Bought a lock pick.', 'shop'); break;
-        default:
-          p.spells[it.id]++;
-          it.sold = true;
-          this.log(`Bought ${SPELLS[it.id].name}.`, 'shop');
       }
       return true;
     }
@@ -1220,6 +1259,7 @@
   DC.ORTHO = ORTHO;
   DC.DIAG = DIAG;
   DC.SPELLS = SPELLS;
+  DC.SPELL_IDS = SPELL_IDS;
   DC.BOONS = BOONS;
   DC.CLASS_IDS = CLASS_IDS;
 })(typeof window !== 'undefined' ? window : globalThis);

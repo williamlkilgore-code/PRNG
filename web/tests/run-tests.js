@@ -161,6 +161,7 @@ function setClass(g, cls) {
   p.cls = cls; p.level = 1;
   g.s.stats.kills = Math.max(g.s.stats.kills, R.levelThreshold(1));
   if (cls === 'rogue') p.ammo = 3;
+  if (cls === 'wizard') { p.known = { invis: 1, reroll: 1, orb: 1 }; p.casts = R.wizardSlots(1); }
   return g;
 }
 // The sandbox hero has 10 health (the older scenarios were written for it);
@@ -267,10 +268,11 @@ test('diagonal redirect never turns straight back', () => {
 // Plays the current floor with a seeded policy until it ends; returns a summary.
 // Make any owed class or level-up choices at random.
 function settleLevels(g, pick) {
-  const spells = Object.keys(DC.SPELLS);
+  const p = g.s.player;
   while (g.levelsOwed() > 0) {
-    const ok1 = g.s.player.cls ? g.chooseBoon(pick.pick(g.boonChoices()), pick.pick(spells))
-      : g.chooseClass(pick.pick(DC.CLASS_IDS), pick.pick(spells));
+    const open = DC.SPELL_IDS.filter((k) => p.known[k] < R.SPELL_MAX);
+    const ok1 = p.cls ? g.chooseBoon(pick.pick(g.boonChoices()), pick.pick(open))
+      : g.chooseClass(pick.pick(DC.CLASS_IDS), pick.pick(DC.SPELL_IDS));
     if (!ok1) throw new Error('level choice refused');
   }
 }
@@ -307,7 +309,7 @@ test('checkpoint saves', () => {
   ok(playFloor(r.game, 42) === a, 'replayed floor is identical');
 
   // Stats carry over.
-  const c = Game.fromSave({ ...start, floor: 7, player: { hp: 3, maxHp: 14, str: 4, coins: 55, spells: { noclip: 1, fireball: 2, luck: 0, reroll: 3, invis: 0 } } });
+  const c = Game.fromSave({ ...start, floor: 7, player: { hp: 3, maxHp: 14, str: 4, coins: 55, spells: { invis: 1, reroll: 3, orb: 0 } } });
   const p = c.game.s.player;
   ok(c.game.s.floor === 7 && p.hp === 3 && p.maxHp === 14 && p.str === 4 && p.coins === 55 && p.spells.reroll === 3 && p.keys.length === 0, 'stats restored');
   ok(Game.fromSave({ app: 'dice-delve', save: start }).game, 'export wrapper accepted');
@@ -335,8 +337,8 @@ test('checkpoint validation', () => {
     (cp) => { cp.player.coins = -5; },
     (cp) => { cp.floor = 0; },
     (cp) => { cp.floor = '3'; },
-    (cp) => { delete cp.player.spells.fireball; },
-    (cp) => { cp.player.spells.luck = 1.5; },
+    (cp) => { delete cp.player.spells.orb; },
+    (cp) => { cp.player.spells.reroll = 1.5; },
     (cp) => { cp.seedText = 'x'.repeat(500); },
     (cp) => { cp.seedText = '   '; },
     (cp) => { cp.v = 99; },
@@ -428,10 +430,12 @@ test('one-die movement', () => {
   ok(h.shotPath('E').cells.length === 2 && !h.shotPath('E').target, 'range 2');
   h.pickDie(0);
   ok(h.shotPath('E').cells.length === 6, 'range 6');
-  // Spells keep the chosen die.
-  h.s.player.spells.reroll = 1; h.s.player.spells.luck = 1;
-  h.d = () => 4; ok(h.reroll(1) && h.s.die === 0 && h.s.steps === 6, 're-roll keeps the choice');
-  ok(h.darkLuck(1, 6) && h.s.die === 0 && h.s.steps === 1 && h.s.parity === 'diag', 'luck keeps the choice');
+  // Re-rolls keep the chosen die.
+  h.s.player.known.reroll = 2; h.s.player.casts = 5;
+  ok(h.cast('reroll'), 'cast re-roll');
+  h.d = () => 4; ok(h.rerollDie(1) && h.s.die === 0 && h.s.steps === 6, 're-roll keeps the choice');
+  h.s.rerolls = null; h.s.player.known.reroll = 5;
+  ok(h.cast('reroll') && h.setDie(0, 1) && h.s.die === 0 && h.s.steps === 1 && h.s.parity === 'diag', 'chosen value keeps the choice');
 });
 
 test('web stops and halves next move', () => {
@@ -487,38 +491,112 @@ test('portal teleports and movement continues', () => {
   ok(g2.s.phase === 'levelDone', 'continued east after portal to the stairs');
 });
 
-test('spells', () => {
-  const g = sandbox(['###########', '#@...#....#', '#....#...>#', '###########'],
-    [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }, { type: 'web', x: 2, y: 2 }], 'wizard');
-  g.s.player.spells = { noclip: 1, fireball: 1, luck: 1, reroll: 1, invis: 1 };
-  // Invisibility: pass through enemy untouched.
-  forceRoll(g, 1, 1);
-  ok(g.toggleArm('invis'), 'arm invis');
-  g.choose('E'); run(g);
-  ok(g.s.player.x === 3 && g.s.player.hp === 10 && !g.s.level.objects[0].done && g.s.player.spells.invis === 0, 'invisible pass');
-  // Dark one's luck then no-clip through the wall.
-  forceRoll(g, 1, 2);
-  ok(g.darkLuck(6, 1), 'luck');
-  ok(g.s.steps === 6 && g.s.parity === 'ortho', 'luck set dice');
-  ok(!g.availableDirs().includes('E') || g.legalMove('E', 6).kind === 'normal', 'pre-noclip');
-  g.toggleArm('noclip');
-  g.choose('E'); run(g);
-  ok(g.s.player.x > 5 && g.s.player.spells.noclip === 0, 'phased through wall');
-  // Fireball.
-  const before = g.fireballTargets().length;
-  ok(g.fireball(1), 'fireball web');
-  ok(g.fireballTargets().length === before - 1 && g.s.player.spells.fireball === 0, 'web destroyed');
-  // Re-roll.
-  forceRoll(g, 1, 1);
-  ok(g.reroll(0) && g.s.player.spells.reroll === 0, 'reroll');
-  // No-clip needs enough movement to clear the wall.
+test('spells: casting, charges and Wizard slots', () => {
+  const map = ['###########', '#@...#....#', '#....#...>#', '###########'];
+  ok(DC.SPELL_IDS.join() === 'invis,reroll,orb', 'three spells');
+  // Anyone else casts at level 1 with 3 charges.
+  const b = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }]);
+  b.s.player.spells.invis = 2;
+  ok(!b.canCast('invis'), 'two charges are not enough');
+  b.s.player.spells.invis = 4;
+  ok(b.cast('invis') && b.s.player.spells.invis === 1 && b.s.invis.turns === 1 && b.s.invis.level === 1, 'three charges: one level 1 cast');
+  ok(!b.canCast('invis'), 'not while already invisible');
+  forceRoll(b, 1, 1); b.choose('E'); run(b);
+  ok(b.s.player.x === 3 && b.s.player.hp === 10 && !b.s.level.objects[0].done && !b.s.invis, 'invisible pass, then it fades');
+  for (const cls of ['fighter', 'rogue']) {
+    const c = sandbox(map, null, cls); c.s.player.spells.reroll = 3; forceRoll(c, 1, 2);
+    ok(c.cast('reroll') && c.s.rerolls.left === 1, cls + ' casts with charges');
+  }
+  // Wizards cast known spells only, a number of times per floor set by their slots.
+  ok([1, 2, 3, 4, 7, 8, 20].map(R.wizardSlots).join() === '1,2,2,3,3,4,4', 'slots at levels 1, 2, 4 and 8');
+  const w = sandbox(map, null, 'wizard');
+  w.s.player.known = { invis: 2, reroll: 0, orb: 0 }; w.s.player.spells.reroll = 9; w.s.player.casts = 1;
+  forceRoll(w, 1, 2);
+  ok(!w.canCast('reroll'), 'a Wizard does not cast from charges or unknown spells');
+  ok(w.cast('invis') && w.s.player.casts === 0 && w.s.invis.turns === 2, 'known spell at its level');
+  w.s.invis = null;
+  ok(!w.canCast('invis'), 'no casts left this floor');
+  const wf = Game.create('casts'); setClass(wf, 'wizard'); wf.s.player.level = 4; wf.s.stats.kills = 83; wf.s.player.casts = 0;
+  wf.s.phase = 'levelDone'; wf.nextFloor();
+  ok(wf.s.player.casts === 3, 'casts refill each floor (level 4: 3 slots)');
+  // Upgrades: 5n charges to reach level n, up to 5.
+  const u = sandbox(map, null, 'wizard');
+  u.s.player.known = { invis: 0, reroll: 1, orb: 0 }; u.s.player.spells.reroll = 9;
+  ok(!u.canUpgrade('reroll') && !u.canUpgrade('invis'), 'not enough charges; unknown spell');
+  u.s.player.spells.reroll = 10 + 15 + 20 + 25 + 1;
+  for (let lv = 2; lv <= 5; lv++) ok(u.upgradeSpell('reroll') && u.s.player.known.reroll === lv, 'upgrade to ' + lv);
+  ok(!u.upgradeSpell('reroll') && u.s.player.spells.reroll === 1, 'level 5 is the top (costs 10/15/20/25)');
+  const nb = sandbox(map, null, 'rogue'); nb.s.player.spells.orb = 50;
+  ok(!nb.canUpgrade('orb'), 'only Wizards upgrade');
+});
+
+test('spells: invisibility', () => {
+  // x turns, counting the turn it is cast.
+  const g = sandbox(['###########', '#@........#', '#.........#', '#........>#', '###########'], [{ type: 'enemy', x: 8, y: 2, hp: 2, maxHp: 2, stalker: true }], 'wizard');
+  g.s.player.known.invis = 3; g.s.player.casts = 5;
+  ok(g.cast('invis'), 'cast in the roll phase');
+  for (let t = 0; t < 3; t++) {
+    ok(!!g.s.invis && !g.stalkerSees(g.s.level.objects[0]), 'stalkers cannot see you, turn ' + (t + 1));
+    forceRoll(g, 1, 1); g.passTurn() || (g.choose(g.availableDirs()[0]), run(g));
+  }
+  ok(!g.s.invis && g.stalkerSees(g.s.level.objects[0]), 'gone after 3 turns; seen again');
+  // Level 5: walk through a wall; the spell ends that turn.
   const h = sandbox(['#######', '#@#...#', '#.#..>#', '#######'], null, 'wizard');
-  h.s.player.spells.noclip = 1;
+  h.s.player.known.invis = 5; h.s.player.casts = 5;
   forceRoll(h, 1, 1); h.s.steps = 1;
-  h.toggleArm('noclip');
-  ok(!h.availableDirs().includes('E'), 'cannot noclip with 1 move');
+  ok(h.cast('invis') && h.s.invis.turns === 5, 'level 5: 5 turns');
+  ok(!h.availableDirs().includes('E'), 'needs enough movement to clear the wall');
   h.s.steps = 2;
-  ok(h.availableDirs().includes('E'), 'can noclip with 2 moves');
+  ok(h.availableDirs().includes('E'), 'can walk through with 2 moves');
+  h.choose('E'); run(h);
+  ok(h.s.player.x === 3 && !h.s.invis, 'through the wall, and the spell ended');
+  const lo = sandbox(['#######', '#@#...#', '#.#..>#', '#######'], null, 'wizard');
+  lo.s.player.known.invis = 4; lo.s.player.casts = 5; forceRoll(lo, 1, 1); lo.cast('invis');
+  ok(!lo.availableDirs().includes('E'), 'no wall walking below level 5');
+});
+
+test('spells: re-roll', () => {
+  const g = sandbox(['###########', '#@........#', '#........>#', '###########'], null, 'wizard');
+  g.s.player.known.reroll = 3; g.s.player.casts = 5;
+  ok(!g.canCast('reroll'), 'only after rolling');
+  g.roll(); g.s.dice = [2, 5]; g.s.die = 0; g.computeSteps();
+  ok(g.cast('reroll') && g.s.rerolls.left === 3 && !g.canCast('reroll'), 'three attempts');
+  g.d = () => 6;
+  ok(g.rerollDie(0) && g.rerollDie(1) && g.rerollDie(0) && !g.rerollDie(1) && g.s.dice.join() === '6,6', 'then no more');
+  ok(!g.setDie(0, 3), 'no choosing below level 5');
+  g.choose('E');
+  ok(!g.s.rerolls, 'attempts end when you move');
+  run(g);
+  g.s.player.known.reroll = 5;
+  g.roll(); g.s.dice = [1, 1]; g.computeSteps();
+  ok(g.cast('reroll') && g.s.rerolls.choose && !g.rerollDie(0), 'level 5: choose instead of rolling');
+  ok(g.setDie(1, 6) && !g.setDie(0, 6) && g.s.dice.join() === '1,6', 'one die set');
+});
+
+test('spells: glowing orb', () => {
+  const map = ['###############', '#@............#', '#.............#', '#.............#', '#............>#', '###############'];
+  const dark = (extra) => { const g = sandbox(map, extra, 'wizard'); g.s.floor = 10; g.s.level.dark = true; g.s.player.casts = 9; g.rebuildIndex(); return g; };
+  const lit = sandbox(map, null, 'wizard');
+  ok(!lit.canCast('orb'), 'not on a lit floor');
+  ok([1, 2, 3, 4, 5].map(R.orbRadius).join() === '4,5,6,7,8', 'radius 4/5/6/7, then 8');
+  for (let lv = 1; lv <= 4; lv++) {
+    const g = dark(); g.s.player.known.orb = lv;
+    ok(g.cast('orb') && g.s.level.orbRadius === 3 + lv && g.isVisible(1 + 3 + lv, 1) && !g.isVisible(2 + 3 + lv, 1), 'level ' + lv + ' radius');
+    ok(!g.canCast('orb'), 'no weaker or equal recast');
+  }
+  const base = dark(); base.s.player.cls = null; base.s.player.level = 0; base.s.player.spells.orb = 3;
+  ok(base.cast('orb') && base.s.level.orbRadius === 4, 'charges: a level 1 orb');
+  // Level 5: the whole floor for 2 turns, then radius 8; enemies remembered.
+  const g = dark([{ type: 'enemy', x: 13, y: 3, hp: 1, maxHp: 1, stalker: true }]);
+  g.s.player.known.orb = 5;
+  ok(g.cast('orb') && g.s.level.floodTurns === 2 && g.isVisible(13, 4), 'whole floor lit');
+  const e = g.s.level.objects[0];
+  ok(e.lastSeen && e.lastSeen.join() === '13,3', 'enemy position remembered');
+  g.finishTurnFlags();
+  ok(g.s.level.floodTurns === 1 && g.isVisible(13, 4), 'still flooded on turn 2');
+  g.finishTurnFlags();
+  ok(g.s.level.floodTurns === 0 && !g.isVisible(13, 4) && g.isVisible(9, 1) && g.s.level.orbRadius === 8, 'then radius 8');
+  ok(e.lastSeen.join() === '13,3', 'memory kept');
 });
 
 test('dark floor selection and generation', () => {
@@ -575,12 +653,10 @@ test('vision, memory and torches', () => {
   g.s.player.x = 1; g.s.player.y = 1; g.updateVision();
   ok(L.seenStairs && !g.isVisible(9, 4), 'stairs stay marked when out of sight');
 
-  // Preview stops at the edge of sight; fireball only hits visible obstacles.
+  // Preview stops at the edge of sight.
   const h = dark([{ type: 'web', x: 7, y: 1 }]);
-  h.s.player.spells.fireball = 1;
   forceRoll(h, 4, 4);
   ok(h.previewPath('E').length === 1, 'preview limited to what you can see');
-  ok(h.fireballTargets().length === 0 && !h.canCast('fireball'), 'cannot fireball unseen web');
 
   // Carried torch: only on a dark floor that isn't already lit.
   const k = dark();
@@ -638,14 +714,11 @@ test('sling and bodies', () => {
   forceRoll(g, 1, 2); g.s.parity = 'ortho'; g.s.steps = 3;
   g.choose('E'); run(g);
   ok(g.s.player.ammo === before + body.ammo && body.done, 'body ammo picked up');
-  // Melee kills drop bodies; fireball kills don't.
+  // Melee kills drop bodies.
   const m = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 7, y: 3, hp: 1, maxHp: 1 }], 'rogue');
   forceRoll(m, 1, 1);
   m.choose('E'); run(m);
   ok(m.s.level.objects.some((o) => o.type === 'body' && o.x === 3), 'melee kill drops body');
-  m.s.player.spells.fireball = 1;
-  m.fireball(1);
-  ok(!m.s.level.objects.some((o) => o.type === 'body' && o.x === 7), 'fireball leaves no body');
   const none = sandbox(map, null, 'rogue'); none.s.player.ammo = 0; forceRoll(none, 3, 3);
   ok(!none.canShoot() && !none.shoot('E'), 'no shot without ammo');
 });
@@ -794,8 +867,8 @@ test('mimics: ambush, fight and reward', () => {
   ok(g.s.player.hp === hp0 - 4, 'failed check: double damage');
   // Invisibility slips past, and the mimic stays hidden.
   g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
-  g.s.player.spells.invis = 1;
-  forceRoll(g, 3, 3); g.s.armed.invis = true; g.choose('E'); run(g);
+  g.s.player.spells.invis = 3;
+  forceRoll(g, 3, 3); g.cast('invis'); g.choose('E'); run(g);
   ok(g.s.player.hp === hp0 && g.s.player.x === 7 && g.s.level.objects[0].type === 'mimic' && !g.s.level.objects[0].done, 'invisibility passes a mimic');
   // Melee kill: double chest coins + a spell + a body.
   g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
@@ -803,7 +876,7 @@ test('mimics: ambush, fight and reward', () => {
   m = g.s.level.objects[0]; m.hp = 1;
   const spells = () => Object.values(g.s.player.spells).reduce((a, b) => a + b, 0);
   const c0 = g.s.player.coins, s0 = spells();
-  forceRoll(g, 1, 1); g.d = () => 4; g.choose('E'); run(g);
+  forceRoll(g, 1, 1); g.d = (n) => Math.min(n, 4); g.choose('E'); run(g);
   ok(m.done && g.s.player.coins === c0 + 2 * (3 + 4) && spells() === s0 + 1, 'melee kill: 2x chest coins + spell');
   ok(g.s.level.objects.some((o) => o.type === 'body' && o.x === 4), 'melee kill leaves a body');
   // Sling kill (a Rogue).
@@ -812,13 +885,14 @@ test('mimics: ambush, fight and reward', () => {
   g.s.level.objects[0].hp = 1; g.s.player.x = 1;
   const c1 = g.s.player.coins;
   forceRoll(g, 3, 3); g.d = () => 1; g.shoot('E');
-  ok(g.s.level.objects[0].done && g.s.player.coins === c1 + 2 * (3 + 1) + R.spellCoinValue(20), 'sling kill gives the hoard (a Rogue sells the spell)');
-  // Fireball kill (a Wizard).
+  ok(g.s.level.objects[0].done && g.s.player.coins === c1 + 2 * (3 + 1), 'sling kill gives the hoard');
+  // Magic missile kill (a Wizard).
   g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }], 'wizard'));
   forceRoll(g, 3, 3); g.choose('E'); g.d = () => 20; run(g);
-  g.s.player.spells.fireball = 1; const c2 = g.s.player.coins;
-  forceRoll(g, 1, 1); g.d = (n) => Math.min(n, 6); g.fireball(0);
-  ok(g.s.level.objects[0].done && g.s.player.coins === c2 + 2 * (3 + 6) && !g.s.level.objects.some((o) => o.type === 'body'), 'fireball kill: hoard, no body');
+  g.s.level.objects[0].hp = 1; g.s.player.x = 1;
+  const c2 = g.s.player.coins;
+  forceRoll(g, 3, 3); g.d = (n) => Math.min(n, 3); g.shoot('E');
+  ok(g.s.level.objects[0].done && g.s.player.coins === c2 + 2 * (3 + 3) && g.s.player.spells.orb === 1, 'missile kill: hoard and a charge');
   // Death by ambush.
   g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
   g.s.player.hp = 3; forceRoll(g, 3, 3); g.choose('E'); g.d = () => 1; run(g);
@@ -847,13 +921,6 @@ test('mimics: fake doors', () => {
   ok(g.s.phase === 'pickPrompt', 'pick prompt as for a real door');
   g.d = () => 5; const r = g.pickLock();
   ok(r.mimic && g.s.player.lockpicks === 1 && g.s.level.objects[0].mimic === 'door' && g.s.player.hp === g.s.player.maxHp - 4 && g.s.phase === 'roll', 'pick triggers ambush, pick kept');
-  // Fireball on a hidden door mimic.
-  g = sandbox(map, [fake()], 'wizard'); g.s.floor = 20;
-  g.s.player.x = 3; g.s.player.y = 2; g.s.player.spells.fireball = 1;
-  forceRoll(g, 1, 1); g.d = () => 3;
-  const c0 = g.s.player.coins, k0 = g.s.stats.kills;
-  g.fireball(0);
-  ok(g.s.level.objects[0].done && g.s.player.coins === c0 + 2 * (3 + 3) && g.s.stats.kills === k0 + 1, 'fireball on a hidden door mimic gives the hoard');
 });
 
 test('base hero, kills and classes', () => {
@@ -863,12 +930,12 @@ test('base hero, kills and classes', () => {
   const p = g.s.player;
   ok(p.hp === 7 && p.maxHp === 7 && p.str === 1 && p.dex === 1 && p.ammo === 0 && !p.cls && p.level === 0, 'base hero');
   ok(Object.values(p.spells).every((n) => n === 0), 'no spells');
-  // The base hero can't shoot or cast, even holding stones and spells.
+  // The base hero can't shoot, even holding stones; one charge isn't a cast.
   const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
   const b = sandbox(map, [{ type: 'enemy', x: 5, y: 1, hp: 1, maxHp: 1 }]);
-  b.s.player.ammo = 2; b.s.player.spells.fireball = 1; b.s.player.spells.reroll = 1;
+  b.s.player.ammo = 2; b.s.player.spells.invis = 1; b.s.player.spells.reroll = 1;
   forceRoll(b, 3, 3);
-  ok(!b.canShoot() && !b.canCast('fireball') && !b.canCast('reroll'), 'base hero cannot shoot or cast');
+  ok(!b.canShoot() && !b.canCast('invis') && !b.canCast('reroll'), 'base hero cannot shoot; one charge is not a cast');
   // The 10th kill owes a class; rolling waits for the choice.
   b.s.stats.kills = 9;
   b.choose('E'); b.drainEvents(); run(b);
@@ -877,21 +944,22 @@ test('base hero, kills and classes', () => {
   ok(!b.chooseBoon('hp') && !b.chooseClass('bard') && !b.chooseClass('wizard'), 'bad choices refused (wizard needs a spell)');
   const stones = b.s.player.ammo, coins0 = b.s.player.coins; // includes stones picked up from the body
   ok(b.chooseClass('fighter') && b.s.player.maxHp === 15 && b.s.player.level === 1 && b.levelsOwed() === 0, 'fighter: +5 max health');
-  ok(b.s.player.ammo === 0 && b.s.player.spells.fireball === 0 && b.s.player.coins === coins0 + stones * R.STONE_COINS + 2 * R.spellCoinValue(1), 'fighter sells stones and spells');
+  ok(b.s.player.ammo === 0 && b.s.player.spells.invis === 1 && b.s.player.coins === coins0 + stones * R.STONE_COINS, 'fighter sells stones, keeps spell charges');
   ok(!b.chooseClass('rogue'), 'class only once');
   ok(b.roll(), 'roll after choosing');
 
-  const mk = (cls, spell) => { const h = sandbox(map); h.s.stats.kills = 10; h.s.player.ammo = 1; h.s.player.spells.luck = 1; h.chooseClass(cls, spell); return h; };
-  const r = mk('rogue'), w = mk('wizard', 'fireball');
-  ok(r.s.player.maxHp === 12 && r.s.player.dex === 3 && r.s.player.ammo === 6 && r.s.player.spells.luck === 0, 'rogue: +2 health, +2 DEX, 5 stones, sells spells');
-  ok(w.s.player.maxHp === 10 && w.s.player.ammo === 0 && w.s.player.spells.luck === 1 && w.s.player.slots.length === 1 && w.s.player.slots[0].spell === 'fireball', 'wizard: a slot, keeps spells, sells stones');
+  const mk = (cls, spell) => { const h = sandbox(map); h.s.stats.kills = 10; h.s.player.ammo = 1; h.s.player.spells.orb = 1; h.chooseClass(cls, spell); return h; };
+  const r = mk('rogue'), w = mk('wizard', 'orb');
+  ok(r.s.player.maxHp === 12 && r.s.player.dex === 3 && r.s.player.ammo === 6 && r.s.player.spells.orb === 1, 'rogue: +2 health, +2 DEX, 5 stones, keeps charges');
+  ok(w.s.player.maxHp === 10 && w.s.player.ammo === 0 && w.s.player.spells.orb === 1 && w.s.player.known.orb === 1 && w.s.player.known.invis === 0 && w.s.player.casts === 1, 'wizard: learns a spell, 1 cast, sells stones');
+  ok(!mk('wizard', 'fireball').s.player.cls, 'wizard needs a real spell');
   // Loot after choosing a class.
   const loot = sandbox(map, [{ type: 'body', x: 2, y: 1, ammo: 2 }, { type: 'darkchest', x: 3, y: 1 }], 'fighter');
   forceRoll(loot, 1, 2); loot.s.parity = 'ortho'; loot.s.steps = 3; loot.d = (n) => Math.min(n, 2);
   const c0 = loot.s.player.coins;
   loot.choose('E'); run(loot);
-  ok(loot.s.player.ammo === 0 && Object.values(loot.s.player.spells).every((n) => n === 0) &&
-    loot.s.player.coins === c0 + 2 + (R.coinValue(1) + 2) + R.spellCoinValue(1), 'fighter sells found stones and spells');
+  ok(loot.s.player.ammo === 0 && Object.values(loot.s.player.spells).reduce((a, b2) => a + b2, 0) === 1 &&
+    loot.s.player.coins === c0 + 2 + (R.coinValue(1) + 2), 'fighter sells found stones, keeps the spell charge');
   // Shops only offer what the class can use.
   for (const cls of [null, 'fighter', 'rogue', 'wizard']) {
     for (let k = 0; k < 20; k++) {
@@ -899,12 +967,12 @@ test('base hero, kills and classes', () => {
       if (cls) setClass(sh, cls);
       sh.s.phase = 'levelDone'; sh.s.floor = 4; sh.nextFloor();
       const ids = sh.s.shop.items.map((i) => i.id);
-      ok(ids.every((id) => !DC.SPELLS[id] || cls === 'wizard') && (!ids.includes('ammo') || cls === 'rogue'), `shop offers usable items (${cls})`);
+      ok(ids.every((id) => !DC.SPELLS[id]) && (!ids.includes('ammo') || cls === 'rogue'), `shop: no spells, stones only for Rogues (${cls})`);
     }
   }
 });
 
-test('level-ups, boons and wizard slots', () => {
+test('level-ups and boons', () => {
   const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
   const f = sandbox(map, null, 'fighter');
   f.s.stats.kills = 25;
@@ -918,17 +986,16 @@ test('level-ups, boons and wizard slots', () => {
   r.s.stats.kills = 25;
   ok(r.boonChoices().join() === 'move,range' && !r.chooseBoon('hp') && r.chooseBoon('move') && r.s.player.moveBoost === 1 && r.s.player.maxHp === 11, 'rogue level: +1 health, move boon');
   const w = sandbox(map, null, 'wizard');
-  w.s.player.slots = [{ spell: 'reroll', ready: true }];
+  w.s.player.known = { invis: 0, reroll: 1, orb: 0 }; w.s.player.casts = 0;
   w.s.stats.kills = 25;
-  ok(w.boonChoices().join() === 'slot,range' && !w.chooseBoon('slot') && w.chooseBoon('slot', 'luck') && w.s.player.slots.length === 2, 'wizard slot boon');
-  // Slots are used before charges and recharge each floor.
-  w.s.player.spells.reroll = 1;
-  forceRoll(w, 1, 2);
-  ok(w.spellCount('reroll') === 2 && w.reroll(0) && w.s.player.spells.reroll === 1 && !w.s.player.slots[0].ready, 'slot used first');
-  ok(w.reroll(1) && w.s.player.spells.reroll === 0 && !w.canCast('reroll'), 'then the charge');
-  const wz = Game.create('slots'); setClass(wz, 'wizard'); wz.s.player.slots = [{ spell: 'fireball', ready: false }];
-  wz.s.phase = 'levelDone'; wz.nextFloor();
-  ok(wz.s.player.slots[0].ready, 'slots recharge on a new floor');
+  ok(w.boonChoices().join() === 'spell,range' && !w.chooseBoon('spell') && !w.chooseBoon('spell', 'luck'), 'spellcraft needs a spell');
+  ok(w.chooseBoon('spell', 'invis') && w.s.player.known.invis === 1 && w.s.player.casts === 1, 'learn a spell; level 2 adds a slot (cast)');
+  w.s.stats.kills = 48;
+  ok(w.chooseBoon('spell', 'reroll') && w.s.player.known.reroll === 2 && w.s.player.casts === 1, 'upgrade a spell; level 3 adds no slot');
+  w.s.player.known = { invis: 5, reroll: 5, orb: 4 };
+  w.s.stats.kills = 83;
+  ok(!w.chooseBoon('spell', 'reroll') && w.chooseBoon('spell', 'orb') && w.s.player.casts === 2, 'capped at 5; level 4 adds a slot');
+  ok(w.boonChoices().join() === 'range', 'all spells at 5: only range');
   // Wizard missiles need no stones.
   const m = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }], 'wizard');
   forceRoll(m, 1, 1);
@@ -978,18 +1045,27 @@ test('move and range boosts', () => {
 test('class checkpoints', () => {
   const g = Game.create('classy');
   setClass(g, 'wizard');
-  Object.assign(g.s.player, { slots: [{ spell: 'invis', ready: false }], range: 2, level: 1 });
+  Object.assign(g.s.player, { known: { invis: 3, reroll: 0, orb: 1 }, range: 2, level: 1, casts: 0 });
   const cp = JSON.parse(JSON.stringify(g.checkpointFor(4)));
-  ok(cp.v === 3 && Game.validateCheckpoint(cp) === null, 'v3 checkpoint valid');
+  ok(cp.v === 4 && Game.validateCheckpoint(cp) === null, 'v4 checkpoint valid');
   const back = Game.fromSave(cp).game.s.player;
-  ok(back.cls === 'wizard' && back.level === 1 && back.range === 2 && back.slots.length === 1 && back.slots[0].ready, 'class restored, slots ready');
+  ok(back.cls === 'wizard' && back.level === 1 && back.range === 2 && back.known.invis === 3 && back.known.orb === 1 && back.casts === 1, 'class and spell levels restored, casts refilled');
   const bad = [
     (c) => { c.player.cls = 'bard'; }, (c) => { c.player.level = 0; }, (c) => { c.player.level = 5; },
-    (c) => { c.player.slots = ['nope']; }, (c) => { c.player.cls = 'fighter'; }, (c) => { c.player.range = -1; },
+    (c) => { c.player.known = { invis: 6, reroll: 0, orb: 0 }; }, (c) => { c.player.known = { invis: 0, reroll: 0, orb: 0 }; },
+    (c) => { delete c.player.known; }, (c) => { c.player.cls = 'fighter'; }, (c) => { c.player.range = -1; },
     (c) => { c.tutorial = 'yes'; }, (c) => { c.tutorial = true; c.floor = 4; },
   ];
   bad.forEach((mut, i) => { const c = JSON.parse(JSON.stringify(cp)); mut(c); ok(Game.fromSave(c).error, 'bad class checkpoint ' + i); });
   // Version 2 saves: no class; old floors 1-3 were the tutorial, later floors move up by 3.
+  // Version 3 saves: old spells sold, Wizard slots become known spells.
+  const v3 = { v: 3, seedText: 'old3', floor: 4, tutorial: false,
+    player: { hp: 5, maxHp: 10, str: 1, coins: 2, spells: { noclip: 1, fireball: 2, luck: 0, reroll: 4, invis: 1 }, cls: 'wizard', level: 1, slots: ['fireball', 'reroll'], range: 0, moveBoost: 0 },
+    stats: { kills: 10, coins: 0, floorsCleared: 3 } };
+  const o3 = Game.fromSave(v3).game;
+  ok(o3 && o3.s.player.coins === 2 + 3 * R.spellCoinValue(4) && o3.s.player.spells.reroll === 4 && o3.s.player.spells.invis === 1 && o3.s.player.spells.orb === 0, 'v3: removed spells sold, others kept');
+  ok(o3 && o3.s.player.known.reroll === 1 && o3.s.player.known.orb === 1 && o3.s.player.known.invis === 0 && o3.s.player.casts === 1, 'v3: slots become known spells');
+  ok(Game.fromSave(Object.assign({}, v3, { player: Object.assign({}, v3.player, { slots: ['nope'] }) })).error, 'v3: bad slots rejected');
   const v2 = { v: 2, seedText: 'old', floor: 9, player: { hp: 8, maxHp: 10, str: 2, coins: 4, spells: { noclip: 0, fireball: 1, luck: 0, reroll: 0, invis: 0 } }, stats: { kills: 12, coins: 0, floorsCleared: 8 } };
   const o = Game.fromSave(v2).game;
   ok(o && o.s.floor === 6 && !o.s.tutorial && !o.s.player.cls && o.levelsOwed() === 1, 'v2 save converts and is owed a class');
@@ -1054,14 +1130,22 @@ test('random play simulation', () => {
     const pick = new DC.RNG(run + 1);
     g.s.player.hp = g.s.player.maxHp = 1000; // survive long enough to explore
     if (run % 2) g.s.stats.kills = 40; // start some runs a few levels up, to exercise boosts
+    Object.assign(g.s.player.spells, { invis: 6, reroll: 6, orb: 6 }); // charges to cast or study
     for (let t = 0; t < 4000; t++) {
       const s = g.s;
       if (s.phase === 'dead') { deaths++; break; }
       if (s.phase === 'levelDone' || s.phase === 'shop') { g.nextFloor(); floors++; if (s.floor > 30) break; continue; }
       if (s.phase === 'roll') {
         settleLevels(g, pick);
+        for (const k of DC.SPELL_IDS) if (g.canUpgrade(k)) ok(g.upgradeSpell(k), 'upgrade');
+        if (pick.chance(0.1)) { const c = DC.SPELL_IDS.filter((k) => g.canCast(k)); if (c.length) ok(g.cast(pick.pick(c)), 'cast before rolling'); }
         ok(g.roll(), 'roll refused');
         if (g.s.die === null) g.pickDie(pick.int(0, 1));
+        continue;
+      }
+      if (s.phase === 'choose' && g.canCast('reroll') && pick.chance(0.3)) {
+        ok(g.cast('reroll'), 'cast re-roll');
+        while (g.s.rerolls && g.s.rerolls.left > 0) { if (g.s.rerolls.choose) g.setDie(pick.int(0, 1), pick.int(1, 6)); else g.rerollDie(pick.int(0, 1)); }
         continue;
       }
       if (s.phase === 'choose' && g.freeTargets().length && pick.chance(0.3)) { ok(g.shootAt(pick.pick(g.freeTargets())), 'free shot'); continue; }
