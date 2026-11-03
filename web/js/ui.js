@@ -181,7 +181,7 @@
     odd: { icon: 'i-sp-reroll', title: 'Odd die: move diagonally', text: 'An odd die moves you diagonally. Tap the map toward the corner you want. You keep sliding until your moves run out.' },
     blocked: { icon: 'i-stairs', title: 'Blocked!', text: "You hit something with moves left. Pick a new direction to keep going. You can't turn straight back the way you came, unless that's the only way." },
     doorway: { icon: 'i-door-open', title: 'Doorways', text: 'Rooms are joined by gaps in the wall. Slide through a doorway to reach the next room.' },
-    web: { icon: 'i-web', title: 'Spider webs', text: 'Running into a web stops you on the spot, and your <b>next</b> move is halved. Steer around them when you can.' },
+    web: { icon: 'i-web', title: 'Spider webs', text: 'Running into a web stops you on the spot, and your <b>next</b> move is halved (shots aren\'t affected). Steer around them when you can.' },
     enemy: { icon: 'i-enemy', title: 'Enemies', text: "When you run into an enemy it hits you, and you hit back with your strength. Kill it and you keep moving; if it survives, your move ends. The red number is its health." },
     lock: { icon: 'i-lock', title: 'Locked doors', text: 'A locked door needs the key of the same color. You can always reach the key without opening any door. Walk into the door with the key to open it.' },
     items: { icon: 'i-chest', title: 'Treasure', text: 'Coins buy things in shops (floor 5 is the first). Chests hold extra coins, and sometimes a spell charge. Hearts and med packs heal you; every floor has at least one heart.' },
@@ -438,7 +438,7 @@
     if (ui.aiming) {
       const what = s.player.cls === 'wizard' ? 'Magic missile' : 'Sling';
       const free = game.freeTargets().length ? ` Or tap a glowing enemy (within ${s.player.range} steps) to shoot it directly.` : '';
-      const dirs = game.shotDirs().length ? `tap a ${s.parity === 'ortho' ? 'straight' : 'diagonal'} direction to shoot (range ${s.steps}, ${game.rangedDamage()} damage).` : (s.die === null ? 'pick a die to shoot along its direction.' : 'no clear line this roll.');
+      const dirs = game.shotDirs().length ? `tap a ${s.parity === 'ortho' ? 'straight' : 'diagonal'} direction to shoot (range ${game.shotRange()}, ${game.rangedDamage()} damage).` : (s.die === null ? 'pick a die to shoot along its direction.' : 'no clear line this roll.');
       return `${what}: ${dirs}${free} It hits the first enemy in line and ends your turn. Tap the button again to cancel.`;
     }
     if (game.levelsOwed() > 0 && s.phase === 'roll') return game.s.player.cls ? 'Level up! Choose a boon.' : 'Choose your class!';

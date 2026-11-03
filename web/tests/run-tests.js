@@ -450,6 +450,12 @@ test('web stops and halves next move', () => {
   ok(g.s.player.x === 3 && g.s.phase === 'roll' && g.s.player.webbed, 'stopped on web');
   g.roll(); g.s.dice = [6, 2]; g.pickDie(0);
   ok(g.s.steps === 3 && g.s.halved, 'halved next turn');
+  // Webs never affect shots: full range, and stones fly over webs.
+  const r = sandbox(['#########', '#@......#', '#......>#', '#########'], [{ type: 'web', x: 2, y: 1 }, { type: 'enemy', x: 7, y: 1, hp: 1, maxHp: 1 }], 'rogue');
+  r.s.player.webbed = true;
+  r.roll(); r.s.dice = [6, 2]; r.pickDie(0);
+  ok(r.s.steps === 3 && r.shotRange() === 6 && r.shotPath('E').cells.length === 6, 'webbed: move halved, shot range not');
+  ok(r.shoot('E').hit && r.s.level.objects[1].done && !r.s.level.objects[0].done, 'the stone flies over the web and hits');
 });
 
 test('enemy combat', () => {

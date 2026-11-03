@@ -950,14 +950,21 @@
       return (this.s.parity === 'ortho' ? ORTHO : DIAG).filter((d) => this.shotPath(d).cells.length > 0);
     }
 
-    /* Squares a shot crosses: up to the chosen die, stopping before walls and
-     * locked doors, and at the first enemy. */
+    /* Squares a shot crosses: up to the chosen die (never halved by a web),
+     * passing over webs and items, stopping before walls and locked doors, and
+     * at the first enemy. */
+    // A shot flies the chosen die's full value: webs only halve movement.
+    shotRange() {
+      const s = this.s;
+      return s.dice && s.die !== null ? s.dice[s.die] : 0;
+    }
+
     shotPath(dir) {
       const s = this.s, [dx, dy] = DIRS[dir];
       let { x, y } = s.player;
       const cells = [];
       let target = null;
-      for (let k = 0; k < s.steps; k++) {
+      for (let k = 0; k < this.shotRange(); k++) {
         const nx = x + dx, ny = y + dy;
         if (this.isSolid(nx, ny)) break;
         if (dx && dy && this.isSolid(x + dx, y) && this.isSolid(x, y + dy)) break;
