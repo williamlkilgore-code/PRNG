@@ -233,6 +233,37 @@
     <circle cx="14.2" cy="9.8" r="1.6" style="fill:#fff" opacity=".7"/>
   </symbol>
 
+  <!-- Class versions of the player pawn: the same blue pawn wearing its gear. -->
+  <symbol id="i-player-fighter" viewBox="0 0 32 32">
+    <ellipse cx="16" cy="27" rx="9" ry="2.6" style="fill:var(--ink)" opacity=".18"/>
+    <path d="M9.5 27Q9 20 13.4 17.2A6 6 0 1 1 18.6 17.2Q23 20 22.5 27Z" style="fill:var(--player);${ink}" stroke-width="1.8"/>
+    <path d="M9.6 12.4A6.4 6.4 0 0 1 22.4 12.4Z" style="fill:#aeb6bf;${ink}" stroke-width="1.6"/>
+    <path d="M16 6V12.4" style="fill:none;stroke:#c8372d;stroke-linecap:round" stroke-width="2.4"/>
+    <path d="M15.2 12.4h1.6v3.4h-1.6Z" style="fill:#aeb6bf;${ink}" stroke-width="1"/>
+    <path d="M19.5 18.5h6.5v4.2q0 3.6-3.25 5.3q-3.25-1.7-3.25-5.3Z" style="fill:#c8372d;${ink}" stroke-width="1.5"/>
+    <path d="M22.75 19.5v7.2M20.5 22.5h4.5" style="fill:none;stroke:#f4e9d0;stroke-linecap:round" stroke-width="1.3"/>
+  </symbol>
+
+  <symbol id="i-player-wizard" viewBox="0 0 32 32">
+    <ellipse cx="16" cy="27" rx="9" ry="2.6" style="fill:var(--ink)" opacity=".18"/>
+    <path d="M9.5 27Q9 20 13.4 17.2A6 6 0 1 1 18.6 17.2Q23 20 22.5 27Z" style="fill:var(--player);${ink}" stroke-width="1.8"/>
+    <path d="M24.5 10V28" style="fill:none;stroke:#8a5a2b;stroke-linecap:round" stroke-width="2"/>
+    <circle cx="24.5" cy="8.5" r="2.4" style="fill:#b48cff;${ink}" stroke-width="1.2"/>
+    <path d="M10.5 9.6L18.5 0.8L21.5 9.6Z" style="fill:#5b3fa8;${ink}" stroke-width="1.6" stroke-linejoin="round"/>
+    <ellipse cx="16" cy="9.8" rx="8.2" ry="2.1" style="fill:#5b3fa8;${ink}" stroke-width="1.6"/>
+    <path d="M17 4.6l.6 1.4 1.5.1-1.1 1 .3 1.5-1.3-.8-1.3.8.3-1.5-1.1-1 1.5-.1Z" style="fill:#ffd23f"/>
+  </symbol>
+
+  <symbol id="i-player-rogue" viewBox="0 0 32 32">
+    <ellipse cx="16" cy="27" rx="9" ry="2.6" style="fill:var(--ink)" opacity=".18"/>
+    <path d="M9.5 27Q9 20 13.4 17.2A6 6 0 1 1 18.6 17.2Q23 20 22.5 27Z" style="fill:var(--player);${ink}" stroke-width="1.8"/>
+    <path d="M8.8 17Q7.8 4.2 16 4Q24.2 4.2 23.2 17Q21 14 16 14.4Q11 14 8.8 17Z" style="fill:#2f5d3a;${ink}" stroke-width="1.6"/>
+    <path d="M11.5 15.2Q12 8.2 16 8Q20 8.2 20.5 15.2Q18.5 13.4 16 13.6Q13.5 13.4 11.5 15.2Z" style="fill:#1d2a22"/>
+    <path d="M13.3 12.2h1.8M16.9 12.2h1.8" style="fill:none;stroke:#ffd23f;stroke-linecap:round" stroke-width="1.4"/>
+    <path d="M6.2 26.5L11 19.8" style="fill:none;stroke:#c9ccd3;stroke-linecap:round" stroke-width="2"/>
+    <path d="M10 18.8l2.2 2" style="fill:none;stroke:#7a4a1c;stroke-linecap:round" stroke-width="1.8"/>
+  </symbol>
+
   <symbol id="i-cross" viewBox="0 0 32 32">
     <path d="M7 8Q16 15 25 25M25 7Q17 16 7.5 25" style="fill:none;stroke:var(--pencil);stroke-linecap:round" stroke-width="2.4"/>
   </symbol>
@@ -385,7 +416,7 @@
     // Stairs stay clearly marked once seen, drawn above the fog.
     if (!dark || lit(L.stairs.x, L.stairs.y) || L.seenStairs) out += use('i-stairs', L.stairs.x, L.stairs.y);
 
-    out += `<g class="player${s.invis ? ' invisible' : ''}${game.wallWalk() ? ' noclip' : ''}${game.isLit() ? ' torchlit' : ''}">${use('i-player', p.x, p.y)}</g>`;
+    out += `<g class="player${s.invis ? ' invisible' : ''}${game.wallWalk() ? ' noclip' : ''}${game.isLit() ? ' torchlit' : ''}">${use(p.cls ? 'i-player-' + p.cls : 'i-player', p.x, p.y)}</g>`;
 
     if (ui.aiming && !ui.busy) {
       // Range boost: enemies close enough to shoot directly.

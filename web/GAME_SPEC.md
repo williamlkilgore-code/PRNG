@@ -537,7 +537,7 @@ Objects are never removed from the array, because portals point at each other by
 ## 6. Rendering (`render.js`)
 
 - **Symbol sheet.** `SYMBOLS` is a string of `<pattern>` and `<symbol>` definitions. `ui.js` injects it once into a hidden `<svg>` in `#sprites`. The board and every HTML icon draw from it with `<use href="#id">`.
-  - **Map symbols:** `i-start`, `i-stairs`, `i-coin`, `i-chest`, `i-heart`, `i-medpack`, `i-web`, `i-enemy`, `i-key`, `i-lock`, `i-door-open`, `i-portal`, `i-player`, `i-cross`
+  - **Map symbols:** `i-start`, `i-stairs`, `i-coin`, `i-chest`, `i-heart`, `i-medpack`, `i-web`, `i-enemy`, `i-key`, `i-lock`, `i-door-open`, `i-portal`, `i-player` (the base hero; `i-player-fighter`, `i-player-wizard` and `i-player-rogue` once a class is chosen), `i-cross`
   - **Spell and shop icons:** `i-sp-reroll`, `i-sp-invis`, `i-sp-orb`, `i-sp-maxhp`, `i-sp-heal`, `i-sp-str`, `i-sp-gamble`
   - **Patterns:** `grid`, `hatch`
 - **Theming inside symbols.** Use `style="fill:var(--token)"`. Don't use CSS classes. Custom properties pass into `<use>` shadow trees reliably; class selectors don't.
