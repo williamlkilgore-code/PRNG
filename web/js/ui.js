@@ -184,7 +184,7 @@
     web: { icon: 'i-web', title: 'Spider webs', text: 'Running into a web stops you on the spot, and your <b>next</b> move is halved. Steer around them when you can.' },
     enemy: { icon: 'i-enemy', title: 'Enemies', text: "When you run into an enemy it hits you, and you hit back with your strength. Kill it and you keep moving; if it survives, your move ends. The red number is its health." },
     lock: { icon: 'i-lock', title: 'Locked doors', text: 'A locked door needs the key of the same color. You can always reach the key without opening any door. Walk into the door with the key to open it.' },
-    items: { icon: 'i-chest', title: 'Treasure', text: 'Coins buy things in shops (floor 5 is the first). Chests hold extra coins. Hearts and med packs heal you.' },
+    items: { icon: 'i-chest', title: 'Treasure', text: 'Coins buy things in shops (floor 5 is the first). Chests hold extra coins, and sometimes a spell charge. Hearts and med packs heal you; every floor has at least one heart.' },
     portal: { icon: 'i-portal', title: 'Portals', text: 'Step into a portal and you come out of its matching twin, still moving in the same direction.' },
     dark: { icon: 'i-moon', title: 'A dark floor', text: "You can only see the squares next to you. Every dark floor has a torch you can reach without keys. Pick it up to see 4 squares around you. There's also a dark chest with a free spell." },
     shoot: { icon: 'i-sling', title: 'Ranged attacks', text: 'After rolling and picking a die you can <b>shoot instead of moving</b>: tap the ranged button, then a direction. The shot flies as far as your chosen die in a straight or diagonal line (same as your move) and hits the first enemy for 1 damage. Rogues use sling stones (collect more from bodies); a Wizard\'s magic missile never runs out.' },
@@ -196,7 +196,7 @@
     mimic: { icon: 'i-mimic-open', title: 'Mimic!', text: "Deep in the dungeon, some chests and locked doors are monsters in disguise. When one wakes it bites first: d20 + DEX of 12 or more takes a normal bite, anything less doubles it. It has double an enemy's health and never moves. Kill it for twice a chest's coins plus a random spell. Look closely: a mimic shows tiny teeth at its seam." },
     lockpick: { icon: 'i-lockpick', title: 'Lock picks', text: "With a lock pick, walking into a locked door you don't have the key for lets you try the lock: d20 + DEX must reach the door's number (gold 12, crimson 14, azure 16, emerald 18). Buy DEX in the shop to get better at it." },
     spells: { icon: 'i-sp-orb', title: 'Spells', text: `There are three spells: Re-roll, Invisibility and Glowing Orb. They sit in the bar under the direction pad. Anyone can cast a spell at level 1 by spending <b>${R.CHARGES_PER_CAST} charges</b> (found in dark chests and mimic hoards). Wizards learn spells instead, cast them at their own level (up to 5), and study charges to level them up.` },
-    spellbook: { icon: 'i-cls-wizard', title: 'Your spellbook', text: 'As a Wizard you can cast any spell you know, a few times per floor (more casts at levels 2, 4 and 8). Tap your class badge in the top bar to open your spellbook: spend 5× the next level in charges of a spell to level it up.' },
+    spellbook: { icon: 'i-cls-wizard', title: 'Your spellbook', text: 'As a Wizard you can cast any spell you know, a few times per floor (more casts at levels 2, 4 and 8). Tap your class badge in the top bar to open your spellbook: study charges of any spells (3, 6, 9, then 12) to level a spell up.' },
   };
   const hintState = (() => {
     try { const v = JSON.parse(store.get(HINTS_KEY) || '{}'); return { off: !!v.off, seen: v.seen && typeof v.seen === 'object' ? v.seen : {} }; }
@@ -273,6 +273,7 @@
       <span class="stat" title="Strength">${RD.icon('i-sp-str')}<b>${p.str}</b></span>
       <span class="stat" title="Dexterity">${RD.icon('i-sp-dex', '', '#7b4fc0')}<b>${p.dex}</b></span>
       ${p.range ? `<span class="stat" title="Range: shoot enemies within ${p.range} steps">${RD.icon('i-missile')}<b>${p.range}</b></span>` : ''}
+      ${p.cls === 'wizard' || p.cls === 'rogue' ? `<span class="stat" title="Ranged damage">${RD.icon(p.cls === 'wizard' ? 'i-missile' : 'i-sling')}<b>${game.rangedDamage()}</b></span>` : ''}
       ${p.moveBoost ? `<span class="stat" title="Move boost: up to ${p.moveBoost} extra squares">${RD.icon('i-cls-rogue')}<b>+${p.moveBoost}</b></span>` : ''}
       ${p.lockpicks ? `<span class="stat" title="Lock picks">${RD.icon('i-lockpick')}<b>${p.lockpicks}</b></span>` : ''}
       <span class="stat" title="Coins">${RD.icon('i-coin')}<b>${p.coins}</b></span>
@@ -437,7 +438,7 @@
     if (ui.aiming) {
       const what = s.player.cls === 'wizard' ? 'Magic missile' : 'Sling';
       const free = game.freeTargets().length ? ` Or tap a glowing enemy (within ${s.player.range} steps) to shoot it directly.` : '';
-      const dirs = game.shotDirs().length ? `tap a ${s.parity === 'ortho' ? 'straight' : 'diagonal'} direction to shoot (range ${s.steps}).` : (s.die === null ? 'pick a die to shoot along its direction.' : 'no clear line this roll.');
+      const dirs = game.shotDirs().length ? `tap a ${s.parity === 'ortho' ? 'straight' : 'diagonal'} direction to shoot (range ${s.steps}, ${game.rangedDamage()} damage).` : (s.die === null ? 'pick a die to shoot along its direction.' : 'no clear line this roll.');
       return `${what}: ${dirs}${free} It hits the first enemy in line and ends your turn. Tap the button again to cancel.`;
     }
     if (game.levelsOwed() > 0 && s.phase === 'roll') return game.s.player.cls ? 'Level up! Choose a boon.' : 'Choose your class!';
@@ -569,11 +570,11 @@
     fighter: { icon: 'i-cls-fighter', blurb: 'A wall of muscle. No ranged weapon and no spells, but tough and hard-hitting.',
       perks: [`+${R.CLASSES.fighter.hp} max health`, `+${R.CLASSES.fighter.levelHp} health per level`, 'Boons: +2 health or +1 strength', 'Sells sling stones for coins'] },
     wizard: { icon: 'i-cls-wizard', blurb: 'Fragile, but learns spells, casts them at higher levels, and has an endless magic missile.',
-      perks: ['Learns 1 spell (you pick)', '1 cast per floor (more at levels 2, 4, 8)', 'Unlimited magic missile', 'Boons: learn/upgrade a spell or +1 range', 'Sells sling stones for coins'] },
+      perks: ['Learns 1 spell (you pick)', '1 cast per floor (more at levels 2, 4, 8)', 'Unlimited magic missile', '+1 STR', 'Boons: learn/upgrade a spell, +1 range or +1 missile damage', 'Sells sling stones for coins'] },
     rogue: { icon: 'i-cls-rogue', blurb: 'Quick and nimble with a sling. Good at locks and dodging mimics.',
-      perks: [`+${R.CLASSES.rogue.hp} max health, +${R.CLASSES.rogue.dex} DEX`, `Sling with ${R.CLASSES.rogue.ammo} stones`, 'Boons: +1 move or +1 range'] },
+      perks: [`+${R.CLASSES.rogue.hp} max health, +1 STR, +${R.CLASSES.rogue.dex} DEX`, `Sling with ${R.CLASSES.rogue.ammo} stones`, 'Boons: +1 move or +1 range'] },
   };
-  const BOON_ICON = { hp: 'i-sp-maxhp', str: 'i-sp-str', spell: 'i-cls-wizard', range: 'i-missile', move: 'i-cls-rogue' };
+  const BOON_ICON = { hp: 'i-sp-maxhp', str: 'i-sp-str', spell: 'i-cls-wizard', range: 'i-missile', move: 'i-cls-rogue', power: 'i-sp-orb' };
 
   function showLevelChoice() {
     if (!game || game.levelsOwed() < 1 || game.s.phase === 'dead') return;
@@ -606,7 +607,7 @@
           ${RD.icon(BOON_ICON[id], 'class-icon')}
           <span class="name">${BOONS[id].name}</span>
           <span class="desc">${BOONS[id].desc}</span>
-          <span class="muted">${id === 'range' ? `Now ${p.range}` : id === 'move' ? `Now +${p.moveBoost}` : id === 'str' ? `STR ${p.str}` : id === 'hp' ? `Max ${p.maxHp}` : DC.SPELL_IDS.filter((k) => p.known[k]).map((k) => `${SPELLS[k].name} ${p.known[k]}`).join(', ')}</span></button>`).join('')}
+          <span class="muted">${id === 'power' ? `Missile damage ${game.rangedDamage()}` : id === 'range' ? `Now ${p.range}` : id === 'move' ? `Now +${p.moveBoost}` : id === 'str' ? `STR ${p.str}` : id === 'hp' ? `Max ${p.maxHp}` : DC.SPELL_IDS.filter((k) => p.known[k]).map((k) => `${SPELLS[k].name} ${p.known[k]}`).join(', ')}</span></button>`).join('')}
       </div>`, false);
     $('#modalBody').querySelectorAll('[data-boon]').forEach((b) => b.addEventListener('click', () => {
       const id = b.dataset.boon;
@@ -1093,19 +1094,19 @@
         ${legend('i-start', 'Start square')}
         ${legend('i-stairs', 'Staircase: exit to the next floor')}
         ${legend('i-web', 'Spider web: stops you at once, and your next move is halved')}
-        ${legend('i-enemy', `Enemy: deals ⌊level/20+1⌋ damage when you run into it (${R.enemyDamage(f)} here) and has ⌊level/10+1⌋ health (${R.enemyHealth(f)} here). You strike for your strength. Kill it and you keep moving; otherwise it stops you.`)}
+        ${legend('i-enemy', `Enemy: deals ⌊level/20+1⌋ damage when you run into it (${R.enemyDamage(f)} here) and has ⌊level/15+1⌋ health (${R.enemyHealth(f)} here). You strike for your strength. Kill it and you keep moving; otherwise it stops you.`)}
         ${legend('i-lock', 'Locked door: needs the matching key, which can always be reached from the start', RD.COLORS.gold)}
         ${legend('i-key', 'Key: opens the door of the same color', RD.COLORS.gold)}
         ${legend('i-portal', 'Portal: step in and come out of its twin, still moving', RD.COLORS.violet)}
         ${legend('i-coin', `Coin: ⌊level/10+1⌋ coins (${R.coinValue(f)} here)`)}
-        ${legend('i-chest', 'Treasure chest: coin value + 1d6 per 20 levels')}
-        ${legend('i-heart', `Heart: heals ⌈level/20⌉ (${R.heartValue(f)} here), up to max health`)}
+        ${legend('i-chest', `Treasure chest: coin value + 1d6 per 20 levels, and a ${Math.round(R.CHEST_CHARGE_CHANCE * 100)}% chance of a spell charge`)}
+        ${legend('i-heart', `Heart: heals 1 + ⌊level/15⌋ (${R.heartValue(f)} here), up to max health. Every floor has at least one.`)}
         ${legend('i-medpack', 'Med pack: heart value + 1d4 per 20 levels')}
         ${legend('i-moon', 'Dark floor (from floor 6, never two in a row): you only see the squares next to you. Seen walls stay sketched; deeper down you stop remembering items (floor 20+) and then walls too (floor 35+). Seen stairs always stay marked.')}
         ${legend('i-torch', `Torch: every dark floor has one you can reach without keys. It lights at once and lets you see ${R.TORCH_RADIUS} squares (walls block light) until the floor ends. Torches bought in the shop are carried; tap the torch button to light one on a dark floor.`)}
-        ${legend('i-darkchest', 'Dark chest: on every dark floor. Chest coins plus a random spell.')}
-        ${legend('i-sling', "Sling (Rogue): after rolling and picking a die, shoot instead of moving. The stone travels up to your die's number, in its direction type, and hits the first enemy for 1 damage, then your turn ends.")}
-        ${legend('i-missile', "Magic missile (Wizard): works like the sling but never runs out. With a range boost, Rogues and Wizards can also shoot any visible enemy within that many steps directly.")}
+        ${legend('i-darkchest', `Dark chest: on every dark floor. Chest coins plus ${R.DARK_CHEST_CHARGES} random spell charges.`)}
+        ${legend('i-sling', "Sling (Rogue): after rolling and picking a die, shoot instead of moving. The stone travels up to your die's number, in its direction type, and hits the first enemy, then your turn ends. Shots deal 1 damage, +1 every 3 class levels.")}
+        ${legend('i-missile', "Magic missile (Wizard): works like the sling but never runs out, and the Arcane power boon adds +1 damage each. With a range boost, Rogues and Wizards can also shoot any visible enemy within that many steps directly.")}
         ${legend('i-body', 'Body: enemies killed in melee or by the sling leave one. Walk over it to collect 1–2 sling stones. Fireball leaves nothing.')}
         ${legend('i-stalker', `Stalker (floor ${R.STALKER_FROM}+): after each turn, if it can see you it moves one square closer, attacking when adjacent. On dark floors it sees you only within 2 squares, or from anywhere while your torch is lit.`)}
         ${legend('i-mimic-open', `Mimic (floor ${R.MIMIC_FROM}+): some chests and locked doors are monsters. Touch one and it ambushes you: d20 + DEX ≥ ${R.MIMIC_DODGE} takes normal damage, otherwise double, and your move stops. It has twice an enemy's health and never moves. Killing it gives twice a chest's coins plus a random spell.`)}
@@ -1115,14 +1116,14 @@
       <p>You start as a plain hero: ${R.START_HP} health, STR 1, DEX 1, no ranged weapon and no spells. After <b>${R.FIRST_LEVEL_KILLS} kills</b> you choose a class. Each later level needs 1.5× as many kills as the one before (${[2, 3, 4].map((n) => R.levelThreshold(n)).join(', ')}… kills in total), adds health and lets you pick a boon.</p>
       <div class="legend">
         ${legend('i-cls-fighter', `<b>Fighter</b>: +${R.CLASSES.fighter.hp} max health, +${R.CLASSES.fighter.levelHp} per level. No ranged weapon, no spells. Boons: +${R.BOON_HP} max health or +1 strength.`)}
-        ${legend('i-cls-wizard', '<b>Wizard</b>: learns 1 spell, casts known spells (1 cast per floor, more at levels 2, 4 and 8) and has an unlimited magic missile. Boons: learn or upgrade a spell, or +1 range.')}
-        ${legend('i-cls-rogue', `<b>Rogue</b>: +${R.CLASSES.rogue.hp} max health, +${R.CLASSES.rogue.dex} DEX, a sling with ${R.CLASSES.rogue.ammo} stones. Boons: +1 move (slide up to die + boost, stopping anywhere from the die's value) or +1 range.`)}
+        ${legend('i-cls-wizard', '<b>Wizard</b>: +1 STR, learns 1 spell, casts known spells (1 cast per floor, more at levels 2, 4 and 8) and has an unlimited magic missile. Boons: learn or upgrade a spell, +1 range, or Arcane power (+1 missile damage).')}
+        ${legend('i-cls-rogue', `<b>Rogue</b>: +${R.CLASSES.rogue.hp} max health, +1 STR, +${R.CLASSES.rogue.dex} DEX, a sling with ${R.CLASSES.rogue.ammo} stones. Boons: +1 move (slide up to die + boost, stopping anywhere from the die's value) or +1 range.`)}
       </div>
       <p class="muted">Fighters and Wizards sell sling stones for coins (before choosing a class, you keep them). Everyone keeps spell charges. Shops sell stones only to Rogues, and no longer sell spells.</p>
       <h3>Shops</h3>
       <p>Floor 5 is always a shop. After that a shop turns up every 4 to 10 floors, never more than twice in 10 floors. Heal, Strength +1 and Dexterity +1 are always on sale, plus 4 random offers: Max Health +2, Gamble, a torch, a lock pick or sling stones (Rogues only).</p>
       <h3>Spells</h3>
-      <p>Three spells, each with levels 1 to 5. Anyone can cast a spell at level 1 by spending ${R.CHARGES_PER_CAST} charges of it (charges come from dark chests and mimic hoards). Wizards learn spells, cast any spell they know at its level (${R.WIZARD_SLOT_LEVELS.length} casts per floor at most: one more at Wizard levels ${R.WIZARD_SLOT_LEVELS.join(', ')}), and spend 5 × the next level in charges to level a spell up.</p>
+      <p>Three spells, each with levels 1 to 5. Anyone can cast a spell at level 1 by spending ${R.CHARGES_PER_CAST} charges of it (charges come from chests, dark chests and mimic hoards). Wizards learn spells, cast any spell they know at its level (${R.WIZARD_SLOT_LEVELS.length} casts per floor at most: one more at Wizard levels ${R.WIZARD_SLOT_LEVELS.join(', ')}), and study charges of <b>any</b> spells to level a spell up: 3, 6, 9 and 12 charges (30 to reach level 5).</p>
       <div class="legend">
         ${SPELL_ORDER.map((n) => legend('i-sp-' + n, `<b>${SPELLS[n].name}</b>: ${SPELLS[n].desc} ${[1, 2, 3, 4, 5].map((lv) => `<br><span class="muted">Level ${lv}: ${SPELLS[n].at(lv)}</span>`).join('')}`)).join('')}
       </div>
@@ -1191,7 +1192,7 @@
     ammo: { name: 'Sling stones ×3', desc: 'Three more shots for your sling.', icon: 'i-sling' },
     lockpick: { name: 'Lock pick', desc: 'Try a locked door without its key: d20 + DEX against the door color. Used up either way.', icon: 'i-lockpick' },
     torch: { name: 'Torch', desc: `Carry it; light it on a dark floor to see ${R.TORCH_RADIUS} squares around you until the floor ends.`, icon: 'i-torch' },
-    gamble: { name: 'Gamble', desc: 'Roll a die: 1-2 lose wager · 3-4 money back · 5 money back +2 · 6 money back + 2× wager.', icon: 'i-sp-gamble' },
+    gamble: { name: 'Gamble', desc: 'Roll a die: 1-2 lose wager · 3-4 money back · 5 money back +2 · 6 money back + 2× wager. A loss closes the table for this visit.', icon: 'i-sp-gamble' },
   };
   // "(own N)" next to shop items you can stock up on.
   function ownLabel(id, p) {
@@ -1219,7 +1220,7 @@
             <output>${p.coins ? wager : 0}</output>
             <button class="btn" type="button" data-wager="1">+</button>
             <button class="btn" type="button" data-wager="5">+5</button>
-            <button class="btn primary" type="button" id="gambleBtn" ${p.coins < 1 ? 'disabled' : ''}>Roll</button>
+            <button class="btn primary" type="button" id="gambleBtn" ${p.coins < 1 || s.shop.gambleClosed ? 'disabled' : ''}>${s.shop.gambleClosed ? 'Closed' : 'Roll'}</button>
           </div>
           <div class="gamble-result">${g ? `${RD.dieSvg(g.roll)} <span>${esc(g.text)} (${g.delta >= 0 ? '+' : ''}${g.delta})</span>` : ''}</div>
         </div>`;
@@ -1285,15 +1286,15 @@
         ${RD.icon('i-sp-' + n, 'book-icon')}
         <div class="book-text"><b>${SPELLS[n].name}</b> ${lv ? `· level ${lv}` : '<span class="muted">· not learned</span>'}
           <span class="muted">${lv ? SPELLS[n].at(lv) : SPELLS[n].desc}</span>
-          <span class="muted">${p.spells[n]} charge${p.spells[n] === 1 ? '' : 's'}${cost ? ` · next level: ${cost} charges (${SPELLS[n].at(lv + 1)})` : lv >= R.SPELL_MAX ? ' · max level' : ''}</span></div>
+          <span class="muted">${p.spells[n]} charge${p.spells[n] === 1 ? '' : 's'}${cost ? ` · next level: ${cost} charges of any spell (${SPELLS[n].at(lv + 1)})` : lv >= R.SPELL_MAX ? ' · max level' : ''}</span></div>
         ${cost ? `<button class="btn" type="button" data-up="${n}" ${game.canUpgrade(n) ? '' : 'disabled'}>Study</button>` : ''}
       </div>`;
     }).join('');
     openModal(`
       <h2>Spellbook</h2>
-      <p>${RD.icon('i-cls-wizard', 'inline')} Level ${p.level} Wizard · <b>${p.casts}</b> of ${R.wizardSlots(p.level)} casts left this floor.</p>
+      <p>${RD.icon('i-cls-wizard', 'inline')} Level ${p.level} Wizard · <b>${p.casts}</b> of ${R.wizardSlots(p.level)} casts left this floor · <b>${game.totalCharges()}</b> charges in all.</p>
       <div class="book">${rows}</div>
-      <p class="muted">Study spends charges of a spell you know to raise it a level (level n costs 5 × n charges). You can study before rolling, between floors and in shops. New spells are learned with the Spellcraft boon when you level up.</p>
+      <p class="muted">Study spends charges of any spells to raise a known spell a level (3, 6, 9, then 12 charges: 30 to reach level 5). Its own charges are used first. Charges spent studying can't be spent elsewhere, so maxing one spell may mean waiting to learn another. You can study before rolling, between floors and in shops. New spells are learned with the Spellcraft boon when you level up.</p>
       <div class="row"><button class="btn primary" type="button" id="bookClose">${back ? 'Back' : 'Close'}</button></div>`, !back);
     $('#modalBody').querySelectorAll('[data-up]').forEach((b) => b.addEventListener('click', () => {
       if (game.upgradeSpell(b.dataset.up)) { render(); save(); showSpellbook(back); }

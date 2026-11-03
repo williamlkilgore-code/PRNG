@@ -95,7 +95,7 @@ Dice Delve is a single-player, turn-based dungeon crawler that runs in the brows
 
 The start square is drawn as a **smiley face**. The exit is a **staircase**. Stepping onto the stairs at any point in a slide ends the floor at once. Unused movement points are lost.
 
-Every room's interior is at least **3×3**. Rooms are joined by one-square doorways in a shared wall that is one square thick.
+Every room's interior is at least **3×3** (at least 5×5 on floors 1–10 and 4×4 on floors 11–15). Rooms are joined by one-square doorways in a shared wall that is one square thick.
 
 **Tutorial floors.** The tutorial is optional and is played as "Tutorial 1/3" to "Tutorial 3/3" before the real floor 1. It doesn't count as floors: no floors cleared, no best-floor record, and no shops or dark floors. The layouts are hand-shaped (`generateTutorial(seed, t)` → `tutorialLevel` in `levelgen.js`, seeded with `seedFor(seed, 'tutorial', t)`, dice from `seedFor(seedText, 'tutorial-dice', t)`).
 
@@ -118,18 +118,18 @@ All values use the floor number `f`.
 | Object | Rule |
 |---|---|
 | **Coin** | Gain `floor(f/10 + 1)` coins. Used up. |
-| **Treasure chest** | Gain the coin value plus the sum of `max(1, ceil(f/20))` d6. Used up. |
-| **Heart** | Heal `ceil(f/20)`, up to max health. Used up. |
+| **Treasure chest** | Gain the coin value plus the sum of `max(1, ceil(f/20))` d6, plus a spell charge on a d100 roll of 15 or less (`CHEST_CHARGE_CHANCE`). Used up. |
+| **Heart** | Heal `1 + floor(f/15)`, up to max health. Used up. Every floor has at least one heart outside the start room. |
 | **Med pack** | Heal the heart value plus the sum of `max(1, ceil(f/20))` d4, up to max health. Used up. |
 | **Key** | Picked up. It has a color. |
 | **Locked door** | Solid unless you hold the key of the same color. Walking in with the key opens the door, uses up the key, and the slide continues. It always sits in a doorway with walls on two orthogonally opposite sides. |
 | **Spider web** | Movement stops at once on the web square. The web is used up. Your next roll's movement is halved. |
-| **Enemy** | Has `floor(f/10 + 1)` health. See "Encounters" below. |
+| **Enemy** | Has `floor(f/15) + 1` health. See "Encounters" below. |
 | **Torch** | Only on dark floors (see 2.9). Lights at once when picked up and burns until the floor ends. |
 | **Body** | Left where an enemy dies in melee or to a stone or missile. Holds 1–2 sling stones (d2), picked up when you pass over it. |
 | **Lock pick** | From floor 4, a floor with a lock has a 30% chance of a lock pick in the start zone. Picked up and carried. |
 | **Stalker** | An enemy with `stalker: true` (floor 12+). It hunts you (2.10). |
-| **Dark chest** | Only on dark floors. Gives the chest's coins plus 1 random spell (one of the 5 kinds, rolled on the floor's dice). |
+| **Dark chest** | Only on dark floors. Gives the chest's coins plus 2 random spell charges (`DARK_CHEST_CHARGES`, rolled on the floor's dice). |
 | **Mimic** | From floor 19 (2.11). A hidden chest mimic (`type: 'mimic'`) looks like a chest, or a fake door (`type: 'lock', mimic: true`) looks like a locked door. Touching one starts an ambush. |
 | **Portal** | Comes in colored pairs. Stepping onto one moves you to its twin, and the slide continues from the twin in the same direction. Landing on the twin does not trigger it again. Portals are never used up. |
 
@@ -175,7 +175,7 @@ All values use the floor number `f`.
 | Sling stones ×3 | `3 + t` |
 | Lock pick | `4 + t` |
 
-**Gamble.** Wager from 1 up to your coins, then roll 1d6:
+**Gamble.** Wager from 1 up to your coins, then roll 1d6. After a losing roll (1–2) the table closes for the rest of that shop visit (`shop.gambleClosed`), because the payouts average +⅓ coin per play.
 
 | Roll | Result |
 |---|---|
@@ -199,8 +199,8 @@ There are three spells, each with levels 1 to 5. Their data is `SPELLS` in `game
   - `casts` refills to `rules.wizardSlots(level)` on every floor: one slot at Wizard levels 1, 2, 4 and 8.
   - A level-up that gains a slot adds a cast at once.
 - **Everyone else** (the base hero, Fighter, Rogue) casts at level 1 by spending `CHARGES_PER_CAST = 3` charges.
-- **Charges** (`player.spells`) come from dark chests and mimic hoards (one random spell each), and every class keeps them.
-- **Studying** (`upgradeSpell`): a Wizard spends `upgradeCost(n) = 5n` charges of a known spell to raise it to level n. That's 10, 15, 20 and 25 charges. It's allowed in the roll, levelDone and shop phases.
+- **Charges** (`player.spells`) come from chests (15% chance of one), dark chests (2) and mimic hoards (1), and every class keeps them. For Fighters and Rogues they're a bonus, not a main tool.
+- **Studying** (`upgradeSpell`): a Wizard spends `upgradeCost(n) = 3(n − 1)` charges of **any** spells to raise a known spell to level n: 3, 6, 9 and 12 charges, 30 in total to reach level 5. The spell's own charges are used first, then the largest pool. Charges spent studying aren't available for anything else, so maxing one spell can mean putting off learning another. It's allowed in the roll, levelDone and shop phases.
 - **Learning:** a Wizard learns one spell when choosing the class, and the **Spellcraft** boon (`chooseBoon('spell', name)`) learns a spell or raises it by 1.
 
 ### 2.8 Floor content and size
@@ -242,7 +242,7 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 
 | Rule | Detail |
 |---|---|
-| **Shooting** | Only in the `choose` phase (after rolling, before moving), with ammo, as an alternative to moving. `shoot(dir)` uses one of the roll's 4 direction types, and `shotDirs()` lists only directions with at least one open square. The stone flies up to `steps` squares (the chosen die, halved if webbed). It stops before walls and locked doors (and at a corner squeeze), and hits the first enemy for 1 damage. Ammo −1, then the turn ends. A miss still costs the stone. |
+| **Shooting** | Only in the `choose` phase (after rolling, before moving), with ammo, as an alternative to moving. `shoot(dir)` uses one of the roll's 4 direction types, and `shotDirs()` lists only directions with at least one open square. The stone flies up to `steps` squares (the chosen die, halved if webbed). It stops before walls and locked doors (and at a corner squeeze), and hits the first enemy for `rules.rangedDamage(level, power) = 1 + floor(level/3) + power` damage (`power` is the Wizard's Arcane power, otherwise 0). Ammo −1 for a Rogue, then the turn ends. A miss still costs the stone. |
 | **Bodies** | `killEnemy(o, dropBody)`. Melee, stone and missile kills push a `body` object with `ammo: d2` onto the enemy's square. |
 | **Stalkers** | `rules.stalkerCount(f)` = 0 below floor 12, then `min(3, 1 + floor((f − 12)/8))`. `levelgen` flags that many of the placed enemies as `stalker`, chosen at random. |
 | **Stalker turns** | `endTurn()` calls `moveStalkers()` after every turn except reaching the stairs. Each stalker that **sees** you moves 1 square toward you: the step that most reduces Chebyshev distance, then Manhattan distance, preferring straight steps. It never enters walls, locks, webs, items or other enemies, and obeys the corner rule. If it's already next to you, it attacks instead: the same `encounter()` as melee (it deals floor damage, you hit back with STR, and a kill leaves a body). |
@@ -257,8 +257,8 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 **The base hero** has 7 health, STR 1 and DEX 1. It has no ranged weapon (`canShoot()` is false) and can't cast. Stones and spells it finds are kept for later.
 
 **Kills and levels.** Every kill counts, whatever the source: melee, a stalker fight, or a stone or missile.
-- `rules.killsForLevel(n)`: level 1 needs 10 kills, and each later level needs `ceil(previous × 1.5)` more.
-- `levelThreshold(n)` is the total: 10, 25, 48, 83, 136…
+- `rules.killsForLevel(n)`: level 1 needs 10 kills, and each later level needs `ceil(previous × 1.25)` more.
+- `levelThreshold(n)` is the total: 10, 23, 40, 62, 90, 125, 169, 224…
 - `levelForKills(k)` turns a kill count into a level.
 - `countKill(o)` emits `levelUp` when a threshold is crossed.
 - `levelsOwed()` = `levelForKills(kills) − player.level`. While it is above 0, `roll()` refuses, and the UI opens the chooser.
@@ -268,8 +268,8 @@ Key and lock colors, in order: `gold, crimson, azure, emerald`. Portal pair colo
 | Class | On choosing | Per level | Boons (`chooseBoon(id, spell?)`) |
 |---|---|---|---|
 | Fighter | +5 max health | +2 max health | `hp` (+2 max health) or `str` (+1) |
-| Wizard | Learns 1 spell (the player picks it), 1 cast per floor, and an unlimited magic missile | +1 (a cast slot at levels 2, 4 and 8) | `spell` (learn or upgrade a spell; dropped once all are at 5) or `range` (+1) |
-| Rogue | +2 max health, +2 DEX, 5 stones | +1 | `move` (+1) or `range` (+1) |
+| Wizard | +1 STR. Learns 1 spell (the player picks it), 1 cast per floor, and an unlimited magic missile | +1 (a cast slot at levels 2, 4 and 8) | `spell` (learn or upgrade a spell; dropped once all are at 5), `range` (+1) or `power` (Arcane power: +1 missile damage) |
+| Rogue | +2 max health, +1 STR, +2 DEX, 5 stones | +1 | `move` (+1) or `range` (+1) |
 
 Each level-up adds the class's per-level health, and current health goes up by the same amount.
 
@@ -538,7 +538,7 @@ Objects are never removed from the array, because portals point at each other by
 
 - **Symbol sheet.** `SYMBOLS` is a string of `<pattern>` and `<symbol>` definitions. `ui.js` injects it once into a hidden `<svg>` in `#sprites`. The board and every HTML icon draw from it with `<use href="#id">`.
   - **Map symbols:** `i-start`, `i-stairs`, `i-coin`, `i-chest`, `i-heart`, `i-medpack`, `i-web`, `i-enemy`, `i-key`, `i-lock`, `i-door-open`, `i-portal`, `i-player`, `i-cross`
-  - **Spell and shop icons:** `i-sp-noclip`, `i-sp-fireball`, `i-sp-luck`, `i-sp-reroll`, `i-sp-invis`, `i-sp-maxhp`, `i-sp-heal`, `i-sp-str`, `i-sp-gamble`
+  - **Spell and shop icons:** `i-sp-reroll`, `i-sp-invis`, `i-sp-orb`, `i-sp-maxhp`, `i-sp-heal`, `i-sp-str`, `i-sp-gamble`
   - **Patterns:** `grid`, `hatch`
 - **Theming inside symbols.** Use `style="fill:var(--token)"`. Don't use CSS classes. Custom properties pass into `<use>` shadow trees reliably; class selectors don't.
   - Per-instance color (keys, locks, portals) comes from `currentColor`, set with `style="color:…"` on the `<use>`.
@@ -788,7 +788,8 @@ The suite loads `rng`, `rules`, `levelgen` and `game` into Node and checks:
   - The random-play simulation makes class and boon choices, free shots and stop or continue decisions. Half its runs start at 40 kills.
 - **Spells (experimental):**
   - Charges: 3 for a level 1 cast by non-Wizards.
-  - Wizards: known spells only, casts per floor from slots (1, 2, 2, 3, …, 4), refilling each floor, and study costs of 10/15/20/25 with a cap of 5.
+  - Wizards: known spells only, casts per floor from slots (1, 2, 2, 3, …, 4), refilling each floor, and study costs of 3/6/9/12 from any charges (own first, then the largest pool), with a cap of 5.
+  - Balance: chest charges (d100 ≤ 15), 2 dark chest charges, ranged damage by level and Arcane power, Rogue and Wizard +1 STR, the gamble closing after a loss, a heart outside the start room on every floor, and floors 11–15 with rooms of at least 4×4 and at most 2 locks.
   - Invisibility: x turns, stalkers blind, level 5 wall-walk that ends the spell.
   - Re-roll: x attempts, level 5 picks a value, attempts expire on moving.
   - Orb: radius per level, dark floors only, a level 5 flood for 2 turns then radius 8, and remembered enemies.
