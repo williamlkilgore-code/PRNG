@@ -36,6 +36,7 @@
     hp: { name: 'Toughness', desc: `Max health +${R.BOON_HP}.` },
     str: { name: 'Strength', desc: 'Strength +1: hit enemies harder.' },
     spell: { name: 'Spellcraft', desc: 'Learn a new spell (level 1), or raise a known spell by 1 level (max 5).' },
+    power: { name: 'Arcane power', desc: '+1 magic missile damage.' },
     range: { name: 'Range', desc: 'Range +1: shoot any enemy within that many steps, in any direction.' },
     move: { name: 'Fleet foot', desc: 'Move +1: you may slide up to 1 extra square and stop anywhere from your die onward.' },
   };
@@ -72,7 +73,7 @@
           ammo: R.START_AMMO, dex: 1, lockpicks: 0,
           spells: { invis: 0, reroll: 0, orb: 0 },     // charges
           // Class and level: chosen after the first kills (see rules.js).
-          cls: null, level: 0, range: 0, moveBoost: 0,
+          cls: null, level: 0, range: 0, moveBoost: 0, power: 0,
           known: { invis: 0, reroll: 0, orb: 0 },      // Wizard spell levels
           casts: 0,                                    // Wizard casts left this floor
         },
@@ -114,7 +115,7 @@
         player: {
           hp: p.hp, maxHp: p.maxHp, str: p.str, coins: p.coins, torches: p.torches,
           ammo: p.ammo, dex: p.dex, lockpicks: p.lockpicks, spells: Object.assign({}, p.spells),
-          cls: p.cls, level: p.level, known: Object.assign({}, p.known), range: p.range, moveBoost: p.moveBoost,
+          cls: p.cls, level: p.level, known: Object.assign({}, p.known), range: p.range, moveBoost: p.moveBoost, power: p.power,
         },
         stats: Object.assign({}, s.stats),
         turn: s.turn,
@@ -147,7 +148,8 @@
       if (!(cls === null || CLASS_IDS.includes(cls))) return 'bad class';
       if (!int(level, 0, 1000) || (level > 0) !== (cls !== null)) return 'bad level';
       if (level > R.levelForKills(cp.stats ? cp.stats.kills : 0)) return 'bad level';
-      if ((p.range !== undefined && !int(p.range, 0, 100)) || (p.moveBoost !== undefined && !int(p.moveBoost, 0, 100))) return 'bad boosts';
+      if ((p.range !== undefined && !int(p.range, 0, 100)) || (p.moveBoost !== undefined && !int(p.moveBoost, 0, 100)) ||
+          (p.power !== undefined && (!int(p.power, 0, 100) || (p.power > 0 && cls !== 'wizard')))) return 'bad boosts';
       if (cp.v === 3) {
         const slots = p.slots === undefined ? [] : p.slots;
         if (!Array.isArray(slots) || slots.length > 100 || !slots.every((k) => typeof k === 'string' && OLD_SPELL_IDS.includes(k)) ||
@@ -219,7 +221,7 @@
         dex: cpp.dex === undefined ? 1 : cpp.dex,
         lockpicks: cpp.lockpicks || 0,
         cls: cpp.cls || null, level: cpp.level || 0,
-        range: cpp.range || 0, moveBoost: cpp.moveBoost || 0,
+        range: cpp.range || 0, moveBoost: cpp.moveBoost || 0, power: cpp.power || 0,
       });
       s.tutorial = !!cp.tutorial;
       for (const k of SPELL_IDS) { p.spells[k] = cpp.spells[k]; p.known[k] = cpp.known ? cpp.known[k] : 0; }
@@ -690,17 +692,20 @@
             const v = R.coinValue(f) + rolls.reduce((a, b) => a + b, 0);
             this.gainCoins(v);
             this.clearObj(o);
-            this.log(`Treasure chest! ${R.coinValue(f)} + d6 [${rolls.join(', ')}] = ${v} coins.`, 'good');
+            // Sometimes a chest also holds a spell charge.
+            const extra = this.d(100) <= R.CHEST_CHARGE_CHANCE * 100 ? ` and ${this.gainSpell(SPELL_IDS[this.d(SPELL_IDS.length) - 1])}` : '';
+            this.log(`Treasure chest! ${R.coinValue(f)} + d6 [${rolls.join(', ')}] = ${v} coins${extra}.`, 'good');
             break;
           }
           case 'darkchest': {
             const rolls = [];
             for (let i = 0; i < R.bonusDice(f); i++) rolls.push(this.d(6));
             const v = R.coinValue(f) + rolls.reduce((a, b) => a + b, 0);
-            const spell = SPELL_IDS[this.d(SPELL_IDS.length) - 1];
+            const got = [];
+            for (let k = 0; k < R.DARK_CHEST_CHARGES; k++) got.push(this.gainSpell(SPELL_IDS[this.d(SPELL_IDS.length) - 1]));
             this.gainCoins(v);
             this.clearObj(o);
-            this.log(`Dark chest! ${v} coins and ${this.gainSpell(spell)}.`, 'good');
+            this.log(`Dark chest! ${v} coins, ${got.join(' and ')}.`, 'good');
             break;
           }
           case 'body':
@@ -875,6 +880,7 @@
       p.cls = cls; p.level = 1;
       p.maxHp += C.hp; p.hp += C.hp;
       p.dex += C.dex;
+      p.str += C.str;
       p.ammo += C.ammo;
       if (cls === 'wizard') { p.known[spell] = 1; p.casts = R.wizardSlots(1); }
       this.sellUnusable();
@@ -904,6 +910,7 @@
         case 'spell': p.known[spell]++; break;
         case 'range': p.range++; break;
         case 'move': p.moveBoost++; break;
+        case 'power': p.power++; break;
       }
       const what = id === 'spell' ? (p.known[spell] === 1 ? `learned ${SPELLS[spell].name}` : `${SPELLS[spell].name} level ${p.known[spell]}`) : BOONS[id].name.toLowerCase();
       this.log(`Level ${p.level}! Max health +${gain}, ${what}.`, 'good');
@@ -969,14 +976,20 @@
       return this.fire(cells, target);
     }
 
+    rangedDamage() {
+      const p = this.s.player;
+      return R.rangedDamage(p.level, p.cls === 'wizard' ? p.power : 0);
+    }
+
     fire(cells, target, from) {
       const s = this.s, p = s.player, wizard = p.cls === 'wizard';
       const what = wizard ? 'magic missile' : 'sling stone';
       if (!wizard) p.ammo--;
+      const dmg = this.rangedDamage();
       this.emit('shoot');
-      this.emit(!target ? 'miss' : target.hp <= 1 ? 'kill' : 'hit');
+      this.emit(!target ? 'miss' : target.hp <= dmg ? 'kill' : 'hit');
       if (target) {
-        target.hp -= 1;
+        target.hp -= dmg;
         const name = target.mimic ? 'mimic' : target.stalker ? 'stalker' : 'enemy';
         if (target.hp <= 0) { this.killEnemy(target, true); this.log(`Your ${what} fells the ${name}!`, 'fight'); }
         else this.log(`Your ${what} hits the ${name} (${target.hp}/${target.maxHp} left).`, 'fight');
@@ -1168,15 +1181,24 @@
     canUpgrade(name) {
       const s = this.s, p = s.player;
       return !!(p.cls === 'wizard' && SPELLS[name] && p.known[name] > 0 && p.known[name] < R.SPELL_MAX &&
-        p.spells[name] >= this.upgradeCost(name) && ['roll', 'levelDone', 'shop'].includes(s.phase));
+        this.totalCharges() >= this.upgradeCost(name) && ['roll', 'levelDone', 'shop'].includes(s.phase));
     }
+    totalCharges() {
+      const p = this.s.player;
+      return SPELL_IDS.reduce((a, k) => a + p.spells[k], 0);
+    }
+    // Studying spends charges of any spells: the studied spell's own first,
+    // then from the largest pool.
     upgradeSpell(name) {
       if (!this.canUpgrade(name)) return false;
       const p = this.s.player, cost = this.upgradeCost(name);
-      p.spells[name] -= cost;
+      for (let left = cost; left > 0; left--) {
+        const k = p.spells[name] > 0 ? name : SPELL_IDS.reduce((a, b) => (p.spells[b] > p.spells[a] ? b : a));
+        p.spells[k]--;
+      }
       p.known[name]++;
       this.emit('spellUp');
-      this.log(`You study ${cost} ${SPELLS[name].name} charges: ${SPELLS[name].name} is now level ${p.known[name]}.`, 'spell');
+      this.log(`You study ${cost} spell charge${cost > 1 ? 's' : ''}: ${SPELLS[name].name} is now level ${p.known[name]}.`, 'spell');
       return true;
     }
 
@@ -1236,7 +1258,7 @@
     gamble(wager) {
       const s = this.s, p = s.player;
       wager = Math.floor(wager);
-      if (s.phase !== 'shop' || !s.shop.items.some((it) => it.id === 'gamble')) return null;
+      if (s.phase !== 'shop' || !s.shop.items.some((it) => it.id === 'gamble') || s.shop.gambleClosed) return null;
       if (!(wager >= 1 && wager <= p.coins)) return null;
       const roll = this.d(6);
       let delta, text;
@@ -1246,6 +1268,8 @@
       else { delta = 2 * wager; text = 'You win double! Money back plus 2× your bet.'; }
       p.coins += delta;
       if (delta > 0) s.stats.coins += delta;
+      // A loss closes the gamble table for the rest of this visit.
+      if (delta < 0) { s.shop.gambleClosed = true; text += ' The merchant closes the table.'; }
       s.shop.lastGamble = { roll, wager, delta, text };
       this.emit(delta > 0 ? 'gambleWin' : delta < 0 ? 'gambleLose' : 'roll');
       this.log(`Gamble ${wager}: rolled ${roll}. ${text}`, 'shop');

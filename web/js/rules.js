@@ -11,12 +11,12 @@
 
     // Enemies: damage = floor(level/20 + 1), health = floor(level/10 + 1)
     enemyDamage: (lvl) => Math.floor(lvl / 20 + 1),
-    enemyHealth: (lvl) => Math.floor(lvl / 10 + 1),
+    enemyHealth: (lvl) => Math.floor(lvl / 15 + 1),
 
     // Coin = floor(level/10 + 1)
     coinValue: (lvl) => Math.floor(lvl / 10 + 1),
     // Heart = ceil(level/20)
-    heartValue: (lvl) => Math.ceil(lvl / 20),
+    heartValue: (lvl) => 1 + Math.floor(lvl / 15),
     // Chests roll 1d6 and med packs 1d4 "per level/20" (at least one die).
     bonusDice: (lvl) => Math.max(1, Math.ceil(lvl / 20)),
   };
@@ -84,12 +84,13 @@
   /* Floors 1-10 are simpler: bigger rooms (interior at least 5x5), more
    * doorways, at most one lock and no portals before floor 6. */
   rules.EARLY_FLOORS = 10;
+  rules.BLEND_FLOORS = 15; // floors 11-15: rooms at least 4x4, at most 2 locks
   rules.PORTALS_FROM = 6;
 
   /* Classes and levels. Level 1 (choosing a class) needs 10 kills; each later
    * level needs 1.5x as many kills as the one before (rounded up). */
   rules.FIRST_LEVEL_KILLS = 10;
-  rules.LEVEL_KILL_GROWTH = 1.5;
+  rules.LEVEL_KILL_GROWTH = 1.25;
   // Kills needed to go from level n-1 to level n.
   rules.killsForLevel = (n) => {
     let k = rules.FIRST_LEVEL_KILLS;
@@ -108,11 +109,18 @@
     return n;
   };
   rules.CLASSES = {
-    fighter: { name: 'Fighter', hp: 5, dex: 0, ammo: 0, levelHp: 2, boons: ['hp', 'str'] },
-    rogue: { name: 'Rogue', hp: 2, dex: 2, ammo: 5, levelHp: 1, boons: ['move', 'range'] },
-    wizard: { name: 'Wizard', hp: 0, dex: 0, ammo: 0, levelHp: 1, boons: ['spell', 'range'] },
+    fighter: { name: 'Fighter', hp: 5, str: 0, dex: 0, ammo: 0, levelHp: 2, boons: ['hp', 'str'] },
+    rogue: { name: 'Rogue', hp: 2, str: 1, dex: 2, ammo: 5, levelHp: 1, boons: ['move', 'range'] },
+    wizard: { name: 'Wizard', hp: 0, str: 1, dex: 0, ammo: 0, levelHp: 1, boons: ['spell', 'range', 'power'] },
   };
   rules.BOON_HP = 2;          // Fighter's health boon
+  // Stones and missiles: 1 damage, +1 every 3 class levels, + the Wizard's
+  // Arcane power boons.
+  rules.rangedDamage = (level, power) => 1 + Math.floor(level / 3) + (power || 0);
+  // Spell charges from chests: a normal chest sometimes holds one; a dark
+  // chest always holds two.
+  rules.CHEST_CHARGE_CHANCE = 0.15;
+  rules.DARK_CHEST_CHARGES = 2;
   // Loot a class can't use turns into coins (stones; old-save spells).
   rules.spellCoinValue = (f) => 2 * rules.coinValue(f);
   rules.STONE_COINS = 1;
@@ -120,11 +128,12 @@
   /* Spells: Invisibility, Re-roll and Glowing Orb, each at level 1-5.
    * Wizards learn spells and cast any known spell, `wizardSlots(level)`
    * times per floor (a slot at Wizard levels 1, 2, 4 and 8). Everyone else
-   * casts at level 1 by spending 3 charges. A Wizard raises a known spell to
-   * level n by spending 5n charges of it. */
+   * casts at level 1 by spending 3 charges of that spell. A Wizard raises a
+   * known spell to level n by studying 3(n-1) charges of any spells (30 in
+   * all to reach level 5). */
   rules.SPELL_MAX = 5;
   rules.CHARGES_PER_CAST = 3;
-  rules.upgradeCost = (n) => 5 * n;
+  rules.upgradeCost = (n) => 3 * (n - 1);
   rules.WIZARD_SLOT_LEVELS = [1, 2, 4, 8];
   rules.wizardSlots = (level) => rules.WIZARD_SLOT_LEVELS.filter((l) => level >= l).length;
   // Glowing Orb light radius: 4, 5, 6, 7, then 8 at level 5 (after flooding

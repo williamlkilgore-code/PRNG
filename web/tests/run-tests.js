@@ -19,9 +19,10 @@ const SEEDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'].map(DC.h
 
 test('formulas', () => {
   ok(R.enemyDamage(1) === 1 && R.enemyDamage(19) === 1 && R.enemyDamage(20) === 2 && R.enemyDamage(45) === 3, 'enemy damage');
-  ok(R.enemyHealth(1) === 1 && R.enemyHealth(10) === 2 && R.enemyHealth(25) === 3, 'enemy health');
+  ok(R.enemyHealth(1) === 1 && R.enemyHealth(14) === 1 && R.enemyHealth(15) === 2 && R.enemyHealth(45) === 4, 'enemy health');
   ok(R.coinValue(9) === 1 && R.coinValue(10) === 2, 'coin value');
-  ok(R.heartValue(1) === 1 && R.heartValue(20) === 1 && R.heartValue(21) === 2, 'heart value');
+  ok(R.heartValue(1) === 1 && R.heartValue(14) === 1 && R.heartValue(15) === 2 && R.heartValue(30) === 3, 'heart value');
+  ok(R.rangedDamage(0) === 1 && R.rangedDamage(2) === 1 && R.rangedDamage(3) === 2 && R.rangedDamage(6, 2) === 5, 'ranged damage');
 });
 
 test('shop schedule', () => {
@@ -46,10 +47,14 @@ test('level generation invariants (floors 1-80, 6 seeds)', () => {
       const at = (x, y) => (x < 0 || y < 0 || x >= L.w || y >= L.h ? 0 : L.tiles[y * L.w + x]);
       const tag = `seed ${seed} floor ${floor}`;
 
-      const minRoom = floor <= R.EARLY_FLOORS ? 5 : 3;
+      const minRoom = floor <= R.EARLY_FLOORS ? 5 : floor <= R.BLEND_FLOORS ? 4 : 3;
       for (const r of L.rooms) ok(r.x1 - r.x0 - 1 >= minRoom && r.y1 - r.y0 - 1 >= minRoom, `room < ${minRoom}x${minRoom} ${tag}`);
       ok(L.rooms.length >= 3, `fewer than 3 rooms ${tag}`);
       if (floor <= R.EARLY_FLOORS) ok(L.objects.filter((o) => o.type === 'lock' && !o.mimic).length <= 1, `more than 1 lock early ${tag}`);
+      else if (floor <= R.BLEND_FLOORS) ok(L.objects.filter((o) => o.type === 'lock' && !o.mimic).length <= 2, `more than 2 locks on floors 11-15 ${tag}`);
+      const inRoom = (o, r) => o.x > r.x0 && o.x < r.x1 && o.y > r.y0 && o.y < r.y1;
+      const startRoom = L.rooms.find((r) => inRoom(L.start, r));
+      ok(L.objects.some((o) => o.type === 'heart' && !inRoom(o, startRoom)), `no heart outside the start room ${tag}`);
       if (floor < R.PORTALS_FROM) ok(!L.objects.some((o) => o.type === 'portal'), `portal before floor ${R.PORTALS_FROM} ${tag}`);
       ok(L.w <= 21 && L.h <= 15, `map larger than 21x15 ${tag}`);
       for (let x = 0; x < L.w; x++) ok(at(x, 0) === 0 && at(x, L.h - 1) === 0, `border open ${tag}`);
@@ -516,16 +521,20 @@ test('spells: casting, charges and Wizard slots', () => {
   ok(w.cast('invis') && w.s.player.casts === 0 && w.s.invis.turns === 2, 'known spell at its level');
   w.s.invis = null;
   ok(!w.canCast('invis'), 'no casts left this floor');
-  const wf = Game.create('casts'); setClass(wf, 'wizard'); wf.s.player.level = 4; wf.s.stats.kills = 83; wf.s.player.casts = 0;
+  const wf = Game.create('casts'); setClass(wf, 'wizard'); wf.s.player.level = 4; wf.s.stats.kills = 62; wf.s.player.casts = 0;
   wf.s.phase = 'levelDone'; wf.nextFloor();
   ok(wf.s.player.casts === 3, 'casts refill each floor (level 4: 3 slots)');
-  // Upgrades: 5n charges to reach level n, up to 5.
+  // Upgrades: 3(n-1) charges of any spells to reach level n, up to 5.
+  ok([2, 3, 4, 5].map(R.upgradeCost).join() === '3,6,9,12', 'study costs 3/6/9/12');
   const u = sandbox(map, null, 'wizard');
-  u.s.player.known = { invis: 0, reroll: 1, orb: 0 }; u.s.player.spells.reroll = 9;
+  u.s.player.known = { invis: 0, reroll: 1, orb: 0 }; u.s.player.spells = { invis: 1, reroll: 1, orb: 0 };
   ok(!u.canUpgrade('reroll') && !u.canUpgrade('invis'), 'not enough charges; unknown spell');
-  u.s.player.spells.reroll = 10 + 15 + 20 + 25 + 1;
-  for (let lv = 2; lv <= 5; lv++) ok(u.upgradeSpell('reroll') && u.s.player.known.reroll === lv, 'upgrade to ' + lv);
-  ok(!u.upgradeSpell('reroll') && u.s.player.spells.reroll === 1, 'level 5 is the top (costs 10/15/20/25)');
+  u.s.player.spells = { invis: 1, reroll: 1, orb: 1 };
+  ok(u.upgradeSpell('reroll') && u.s.player.known.reroll === 2 && u.totalCharges() === 0, 'any charges count (3 for level 2)');
+  u.s.player.spells = { invis: 20, reroll: 2, orb: 6 };
+  ok(u.upgradeSpell('reroll') && u.s.player.spells.reroll === 0 && u.s.player.spells.invis === 16 && u.s.player.spells.orb === 6, 'own charges first, then the largest pool');
+  ok(u.upgradeSpell('reroll') && u.upgradeSpell('reroll') && u.s.player.known.reroll === 5 && u.totalCharges() === 1, '30 charges in all to reach level 5');
+  ok(!u.upgradeSpell('reroll'), 'level 5 is the top');
   const nb = sandbox(map, null, 'rogue'); nb.s.player.spells.orb = 50;
   ok(!nb.canUpgrade('orb'), 'only Wizards upgrade');
 });
@@ -673,7 +682,11 @@ test('vision, memory and torches', () => {
   t.choose('E'); run(t);
   const sp = Object.values(t.s.player.spells).reduce((a, b) => a + b, 0);
   ok(t.s.level.torchLit && t.s.player.torches === 0, 'found torch lit');
-  ok(sp === 1 && t.s.player.coins >= 2, 'dark chest gave a spell and coins');
+  ok(sp === 2 && t.s.player.coins >= 2, 'dark chest gave 2 spell charges and coins');
+  // Normal chests: a 15% chance (d100 <= 15) of one charge.
+  const ch = (roll) => { const c = sandbox(map, [{ type: 'chest', x: 2, y: 1 }]); forceRoll(c, 1, 1); c.d = (n) => (n === 100 ? roll : 1); c.choose('E'); run(c);
+    return Object.values(c.s.player.spells).reduce((a, b) => a + b, 0); };
+  ok(ch(15) === 1 && ch(16) === 0, 'chest charge on 15 or less');
 
   // The torch burns out when the floor ends; carried torches are saved.
   const run2 = Game.create('torchy');
@@ -859,7 +872,7 @@ test('mimics: ambush, fight and reward', () => {
   g.drainEvents(); run(g);
   let m = g.s.level.objects[0], hp0 = g.s.player.maxHp;
   ok(g.s.player.hp === hp0 - 2 && g.s.player.x === 3 && g.s.phase === 'roll', 'dodge: normal damage, stop before it');
-  ok(m.type === 'enemy' && m.mimic === 'chest' && m.hp === 6 && m.maxHp === 6, 'revealed with double health');
+  ok(m.type === 'enemy' && m.mimic === 'chest' && m.hp === 4 && m.maxHp === 4, 'revealed with double health');
   ok(g.drainEvents().includes('mimic'), 'mimic event');
   // Failing: double damage.
   g = chest(sandbox(map, [{ type: 'mimic', x: 4, y: 1 }]));
@@ -910,7 +923,7 @@ test('mimics: fake doors', () => {
   g.s.player.x = 2; g.s.player.keys = ['gold'];
   g.choose('E'); g.d = () => 15; run(g);
   let d = g.s.level.objects[0];
-  ok(d.type === 'enemy' && d.mimic === 'door' && d.hp === 6 && g.s.player.keys.length === 1 && g.s.player.x === 3 && g.s.phase === 'roll', 'key triggers ambush, key kept');
+  ok(d.type === 'enemy' && d.mimic === 'door' && d.hp === 4 && g.s.player.keys.length === 1 && g.s.player.x === 3 && g.s.phase === 'roll', 'key triggers ambush, key kept');
   // Kill it: the doorway opens.
   d.hp = 1; forceRoll(g, 3, 3); g.d = () => 2; g.choose('E'); run(g);
   ok(d.done && g.s.phase === 'levelDone', 'dead door mimic leaves an open doorway');
@@ -924,8 +937,8 @@ test('mimics: fake doors', () => {
 });
 
 test('base hero, kills and classes', () => {
-  ok(R.levelThreshold(1) === 10 && R.levelThreshold(2) === 25 && R.levelThreshold(3) === 48 && R.levelThreshold(4) === 83, 'kill curve 10/25/48/83');
-  ok(R.levelForKills(9) === 0 && R.levelForKills(10) === 1 && R.levelForKills(24) === 1 && R.levelForKills(48) === 3, 'level for kills');
+  ok([1, 2, 3, 4, 5, 6, 7, 8].map(R.levelThreshold).join() === '10,23,40,62,90,125,169,224', 'kill curve x1.25');
+  ok(R.levelForKills(9) === 0 && R.levelForKills(10) === 1 && R.levelForKills(22) === 1 && R.levelForKills(40) === 3, 'level for kills');
   const g = Game.create('base');
   const p = g.s.player;
   ok(p.hp === 7 && p.maxHp === 7 && p.str === 1 && p.dex === 1 && p.ammo === 0 && !p.cls && p.level === 0, 'base hero');
@@ -950,7 +963,8 @@ test('base hero, kills and classes', () => {
 
   const mk = (cls, spell) => { const h = sandbox(map); h.s.stats.kills = 10; h.s.player.ammo = 1; h.s.player.spells.orb = 1; h.chooseClass(cls, spell); return h; };
   const r = mk('rogue'), w = mk('wizard', 'orb');
-  ok(r.s.player.maxHp === 12 && r.s.player.dex === 3 && r.s.player.ammo === 6 && r.s.player.spells.orb === 1, 'rogue: +2 health, +2 DEX, 5 stones, keeps charges');
+  ok(r.s.player.maxHp === 12 && r.s.player.dex === 3 && r.s.player.str === 2 && r.s.player.ammo === 6 && r.s.player.spells.orb === 1, 'rogue: +2 health, +1 STR, +2 DEX, 5 stones, keeps charges');
+  ok(mk('wizard', 'invis').s.player.str === 2 && mk('fighter').s.player.str === 1, 'wizard +1 STR, fighter none');
   ok(w.s.player.maxHp === 10 && w.s.player.ammo === 0 && w.s.player.spells.orb === 1 && w.s.player.known.orb === 1 && w.s.player.known.invis === 0 && w.s.player.casts === 1, 'wizard: learns a spell, 1 cast, sells stones');
   ok(!mk('wizard', 'fireball').s.player.cls, 'wizard needs a real spell');
   // Loot after choosing a class.
@@ -958,8 +972,8 @@ test('base hero, kills and classes', () => {
   forceRoll(loot, 1, 2); loot.s.parity = 'ortho'; loot.s.steps = 3; loot.d = (n) => Math.min(n, 2);
   const c0 = loot.s.player.coins;
   loot.choose('E'); run(loot);
-  ok(loot.s.player.ammo === 0 && Object.values(loot.s.player.spells).reduce((a, b2) => a + b2, 0) === 1 &&
-    loot.s.player.coins === c0 + 2 + (R.coinValue(1) + 2), 'fighter sells found stones, keeps the spell charge');
+  ok(loot.s.player.ammo === 0 && Object.values(loot.s.player.spells).reduce((a, b2) => a + b2, 0) === 2 &&
+    loot.s.player.coins === c0 + 2 + (R.coinValue(1) + 2), 'fighter sells found stones, keeps the spell charges');
   // Shops only offer what the class can use.
   for (const cls of [null, 'fighter', 'rogue', 'wizard']) {
     for (let k = 0; k < 20; k++) {
@@ -975,32 +989,38 @@ test('base hero, kills and classes', () => {
 test('level-ups and boons', () => {
   const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
   const f = sandbox(map, null, 'fighter');
-  f.s.stats.kills = 25;
+  f.s.stats.kills = 23;
   ok(f.levelsOwed() === 1 && f.boonChoices().join() === 'hp,str', 'fighter boons');
   const hp0 = f.s.player.maxHp;
   ok(f.chooseBoon('hp') && f.s.player.maxHp === hp0 + 2 + 2 && f.s.player.level === 2, 'fighter level: +2 health, +2 boon');
-  f.s.stats.kills = 83;
+  f.s.stats.kills = 62;
   ok(f.levelsOwed() === 2 && f.chooseBoon('str') && f.chooseBoon('str') && f.s.player.str === 3 && f.levelsOwed() === 0, 'two owed levels');
   ok(!f.chooseBoon('str'), 'nothing owed');
   const r = sandbox(map, null, 'rogue');
-  r.s.stats.kills = 25;
+  r.s.stats.kills = 23;
   ok(r.boonChoices().join() === 'move,range' && !r.chooseBoon('hp') && r.chooseBoon('move') && r.s.player.moveBoost === 1 && r.s.player.maxHp === 11, 'rogue level: +1 health, move boon');
   const w = sandbox(map, null, 'wizard');
   w.s.player.known = { invis: 0, reroll: 1, orb: 0 }; w.s.player.casts = 0;
-  w.s.stats.kills = 25;
-  ok(w.boonChoices().join() === 'spell,range' && !w.chooseBoon('spell') && !w.chooseBoon('spell', 'luck'), 'spellcraft needs a spell');
+  w.s.stats.kills = 23;
+  ok(w.boonChoices().join() === 'spell,range,power' && !w.chooseBoon('spell') && !w.chooseBoon('spell', 'luck'), 'spellcraft needs a spell');
   ok(w.chooseBoon('spell', 'invis') && w.s.player.known.invis === 1 && w.s.player.casts === 1, 'learn a spell; level 2 adds a slot (cast)');
-  w.s.stats.kills = 48;
+  w.s.stats.kills = 40;
   ok(w.chooseBoon('spell', 'reroll') && w.s.player.known.reroll === 2 && w.s.player.casts === 1, 'upgrade a spell; level 3 adds no slot');
   w.s.player.known = { invis: 5, reroll: 5, orb: 4 };
-  w.s.stats.kills = 83;
+  w.s.stats.kills = 62;
   ok(!w.chooseBoon('spell', 'reroll') && w.chooseBoon('spell', 'orb') && w.s.player.casts === 2, 'capped at 5; level 4 adds a slot');
-  ok(w.boonChoices().join() === 'range', 'all spells at 5: only range');
+  ok(w.boonChoices().join() === 'range,power', 'all spells at 5: no spellcraft');
+  w.s.stats.kills = 90;
+  ok(w.chooseBoon('power') && w.s.player.power === 1 && w.rangedDamage() === 1 + 1 + 1, 'arcane power: +1 missile damage (level 5: 1 + 1 + 1)');
+  ok(!r.boonChoices().includes('power') && !f.boonChoices().includes('power'), 'arcane power is for Wizards');
   // Wizard missiles need no stones.
   const m = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }], 'wizard');
   forceRoll(m, 1, 1);
   ok(m.s.player.ammo === 0 && m.canShoot() && m.shoot('E').hit && m.s.player.ammo === 0, 'magic missile is unlimited');
-  ok(!m.s.level.objects.some((o) => o.type === 'body' && !o.done) || true, 'missile kill');
+  // Ranged damage grows with level (and Wizard power).
+  const big = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 5, maxHp: 5 }], 'rogue');
+  big.s.player.level = 6; big.s.stats.kills = 125; forceRoll(big, 1, 1); big.shoot('E');
+  ok(big.s.level.objects[0].hp === 2, 'level 6 Rogue stone hits for 3');
 });
 
 test('move and range boosts', () => {
@@ -1112,11 +1132,15 @@ test('shop and gamble', () => {
   ok(g.buy(0) && g.s.player.hp === g.s.player.maxHp, 'heal');
   const gi = g.s.shop.items.findIndex((i) => i.id === 'gamble');
   if (gi >= 0) {
-    for (let i = 0; i < 50; i++) {
+    for (let roll = 1; roll <= 6; roll++) {
+      g.s.shop.gambleClosed = false;
+      g.d = () => roll;
       const c = g.s.player.coins;
       const r = g.gamble(4);
-      const exp = r.roll <= 2 ? -4 : r.roll <= 4 ? 0 : r.roll === 5 ? 2 : 8;
-      ok(g.s.player.coins - c === exp, 'gamble payout');
+      const exp = roll <= 2 ? -4 : roll <= 4 ? 0 : roll === 5 ? 2 : 8;
+      ok(r && g.s.player.coins - c === exp, 'gamble payout ' + roll);
+      ok(!!g.s.shop.gambleClosed === (roll <= 2), 'table closes only after a loss');
+      if (roll <= 2) ok(g.gamble(1) === null, 'no gambling after a loss');
     }
   }
   g.nextFloor();

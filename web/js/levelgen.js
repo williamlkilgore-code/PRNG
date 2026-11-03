@@ -85,7 +85,8 @@
   function tryGenerate(rng, floor, w, h, seed) {
     const R = DC.rules;
     const early = floor <= R.EARLY_FLOORS;
-    const rooms = splitRegions(rng, w, h, early ? 5 : 3);
+    // Room size eases in: interiors of at least 5 on floors 1-10, 4 on 11-15, then 3.
+    const rooms = splitRegions(rng, w, h, early ? 5 : floor <= R.BLEND_FLOORS ? 4 : 3);
     if (rooms.length < 3) return null;
     const tiles = new Array(w * h).fill(0);
     const roomOf = new Array(w * h).fill(-1);
@@ -141,7 +142,8 @@
 
     // Locked doors: only accepted where they actually cut part of the map off,
     // and only while the start zone keeps room for keys.
-    const wantLocks = floor === 1 ? 0 : early ? rng.int(floor < 4 ? 0 : 1, 1) : rng.int(1, Math.min(3, 1 + Math.floor(floor / 8)));
+    const maxLocks = early ? 1 : floor <= R.BLEND_FLOORS ? 2 : 3;
+    const wantLocks = floor === 1 ? 0 : early ? rng.int(floor < 4 ? 0 : 1, 1) : rng.int(1, Math.min(maxLocks, 1 + Math.floor(floor / 8)));
     const locked = new Set();
     const lockList = [];
     let zone = reach(L, sx, sy, locked);
@@ -246,7 +248,9 @@
     };
     place('coin', rng.int(4, 7), allFloor);
     place('chest', rng.int(floor < 3 ? 0 : 1, 1 + Math.min(2, Math.floor(floor / 10))), allFloor);
-    place('heart', rng.int(1, 2), allFloor);
+    // Every floor has at least one heart outside the start room.
+    place('heart', 1, awayFromStart);
+    place('heart', rng.int(0, 1), allFloor);
     place('medpack', floor >= 3 ? rng.int(0, 1) : 0, allFloor);
     place('web', Math.min(6, 1 + Math.floor(floor / 3) + rng.int(0, 1)), awayFromStart);
     const hp = R.enemyHealth(floor);
