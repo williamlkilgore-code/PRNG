@@ -266,7 +266,25 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .log .log-floor, .log .log-shop { font-weight: bold; }
 
 /* ------------------------------------------------------------ board svg */
-.edge { fill: none; stroke: var(--ink); stroke-width: 2.6; stroke-linecap: round; }
+.edge { fill: none; stroke: var(--ink); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+/* ---- Board art ---- */
+.jamb { fill: none; stroke: #8a5a2b; stroke-width: 4; stroke-linecap: round; }
+.room-tint { opacity: .13; }
+.grain { opacity: .5; }
+.hatching { opacity: .85; }
+.vignette { pointer-events: none; }
+:root[data-theme="dark"] .room-tint { opacity: .06; }
+:root[data-theme="dark"] .vignette, :root[data-theme="dark"] .grain { opacity: .25; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .room-tint { opacity: .06; } :root:not([data-theme="light"]) .grain { opacity: .25; } }
+.mote { fill: #ffe7b0; opacity: .5; }
+.anim-full .mote { animation: mote-drift 9s ease-in-out infinite alternate; }
+@keyframes mote-drift { 0% { transform: translate(0, 0); opacity: .2; } 50% { opacity: .65; } 100% { transform: translate(14px, -22px); opacity: .25; } }
+.light-glow { pointer-events: none; mix-blend-mode: screen; }
+.anim-full .light-glow { animation: light-flicker 1.7s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes light-flicker { 0%, 100% { opacity: 1; transform: scale(1); } 30% { opacity: .82; transform: scale(.985); } 55% { opacity: .95; } 75% { opacity: .78; transform: scale(1.01); } }
+.obj.glow use { filter: drop-shadow(0 0 3px rgba(255, 200, 90, .7)); }
+.anim-full .obj.glow use { animation: obj-glow 2.2s ease-in-out infinite; }
+@keyframes obj-glow { 50% { filter: drop-shadow(0 0 6px rgba(255, 200, 90, .95)); } }
 .trail { fill: none; stroke: var(--pencil); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: .75; stroke-dasharray: 1 0; }
 .trail-dot { fill: var(--pencil); opacity: .75; }
 .obj.done { opacity: .45; }

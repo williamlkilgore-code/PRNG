@@ -19,6 +19,24 @@
   <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
     <line x1="0" y1="0" x2="0" y2="7" style="stroke:var(--hatch)" stroke-width="2.2"/>
   </pattern>
+  <!-- Hand-drawn look: wobbly ink lines, paper grain and a soft edge vignette. -->
+  <filter id="ink-wobble" x="-2%" y="-2%" width="104%" height="104%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+  <filter id="paper-grain" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="3"/>
+    <feColorMatrix values="0 0 0 0 0.35  0 0 0 0 0.28  0 0 0 0 0.18  0 0 0 0.9 -0.32"/>
+  </filter>
+  <radialGradient id="paper-vignette" cx="50%" cy="50%" r="70%">
+    <stop offset="65%" stop-color="#5b4321" stop-opacity="0"/>
+    <stop offset="100%" stop-color="#5b4321" stop-opacity="0.16"/>
+  </radialGradient>
+  <radialGradient id="light-glow">
+    <stop offset="0%" stop-color="#ffb347" stop-opacity="0.18"/>
+    <stop offset="70%" stop-color="#ff8a1f" stop-opacity="0.07"/>
+    <stop offset="100%" stop-color="#ff8a1f" stop-opacity="0"/>
+  </radialGradient>
 
   <symbol id="i-start" viewBox="0 0 32 32">
     <circle cx="16" cy="16" r="11" style="fill:var(--sun);${ink}" stroke-width="1.8"/>
@@ -148,7 +166,7 @@
     <circle cx="24" cy="9" r="1.2" style="fill:var(--ink)"/><circle cx="27.5" cy="14" r=".9" style="fill:var(--ink)"/>
   </symbol>
 
-  <filter id="fog-soft" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="2.5"/></filter>
+  <filter id="fog-soft" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="3.4"/></filter>
 
   <symbol id="i-heart" viewBox="0 0 32 32">
     <path d="M16 27C6 20 3.5 14 7.5 9.8C10.8 6.5 14.6 8 16 11.2C17.4 8 21.2 6.5 24.5 9.8C28.5 14 26 20 16 27Z"
@@ -344,11 +362,36 @@
         if (wall(x + 1, y)) edges += `M${X + C} ${Y}v${C}`;
       }
     }
+    // Each room gets a barely visible tint, chosen from the floor and room number.
+    const TINTS = ['#e8c98a', '#a9c7d9', '#b9d3a3', '#d9b0b0', '#c6b8de'];
+    const tints = (L.rooms || []).map((r, i) => {
+      const t = TINTS[((L.floor || 0) * 7 + i * 3) % TINTS.length];
+      return `<rect class="room-tint" x="${(r.x0 + 1) * C}" y="${(r.y0 + 1) * C}" width="${(r.x1 - r.x0 - 1) * C}" height="${(r.y1 - r.y0 - 1) * C}" style="fill:${t}"/>`;
+    }).join('');
+    // Door frames: short jambs where a doorway meets its wall.
+    let jambs = '';
+    for (const d of L.doorways || []) {
+      const X = d.x * C, Y = d.y * C;
+      if (wall(d.x, d.y - 1) && wall(d.x, d.y + 1)) jambs += `M${X + 4} ${Y}h${C - 8}M${X + 4} ${Y + C}h${C - 8}`;
+      else jambs += `M${X} ${Y + 4}v${C - 8}M${X + C} ${Y + 4}v${C - 8}`;
+    }
+    // Dark floors: a few dust motes drift about (only visible where it's lit).
+    let motes = '';
+    if (L.dark) {
+      for (let k = 0; k < 14; k++) {
+        const mx = ((k * 97 + (L.floor || 0) * 31) % (w * 10)) / 10, my = ((k * 53 + (L.floor || 0) * 17) % (h * 10)) / 10;
+        motes += `<circle class="mote" cx="${mx * C}" cy="${my * C}" r="${1 + (k % 3) * 0.5}" style="animation-delay:-${(k * 1.7).toFixed(1)}s"/>`;
+      }
+    }
     return `<rect width="${w * C}" height="${h * C}" style="fill:var(--paper)"/>
+      <g class="tints">${tints}</g>
       <rect width="${w * C}" height="${h * C}" fill="url(#grid)"/>
+      <rect class="grain" width="${w * C}" height="${h * C}" filter="url(#paper-grain)"/>
       <path d="${walls}" style="fill:var(--wall)"/>
-      <path d="${walls}" fill="url(#hatch)"/>
-      <path d="${edges}" class="edge"/>`;
+      <path d="${walls}" fill="url(#hatch)" class="hatching"/>
+      <g filter="url(#ink-wobble)"><path d="${edges}" class="edge"/><path d="${jambs}" class="jamb"/></g>
+      <rect class="vignette" width="${w * C}" height="${h * C}" fill="url(#paper-vignette)"/>
+      <g class="motes">${motes}</g>`;
   }
 
   function objectSvg(o, i) {
@@ -364,7 +407,8 @@
       out += `<g class="badge"><circle cx="${bx + 4}" cy="${by + 4}" r="6"/><text x="${bx + 4}" y="${by + 7.6}">${o.hp}</text></g>`;
     }
     if (o.done && !opened && o.type !== 'portal') out += use('i-cross', o.x, o.y);
-    const cls = o.done && !opened ? 'obj done' : 'obj';
+    const glow = !o.done && ['torch', 'portal', 'darkchest', 'key'].includes(o.type) ? ' glow' : '';
+    const cls = (o.done && !opened ? 'obj done' : 'obj') + glow;
     // Live enemies bob gently; a negative delay from the clock keeps the motion
     // smooth even though this layer is redrawn every step.
     if (o.type === 'enemy' && !o.done) {
@@ -411,6 +455,11 @@
     L.objects.forEach((o, i) => { if (shows(o)) out += objectSvg(o, i); });
 
     if (dark) out += fogLayer(game, memory);
+    // A warm, flickering glow around the hero while a torch or orb is lit.
+    if (dark && game.isLit() && !(L.floodTurns > 0)) {
+      const r = Math.max(L.torchLit ? DC.rules.TORCH_RADIUS : 1, L.orbRadius || 0) + 0.5;
+      out += `<circle class="light-glow" cx="${center(p.x)}" cy="${center(p.y)}" r="${r * C}" fill="url(#light-glow)" style="animation-delay:-${Date.now() % 1700}ms"/>`;
+    }
     // A level 5 Glowing Orb remembers where enemies were last seen.
     if (dark && L.enemyMemory) {
       for (const o of L.objects) {
