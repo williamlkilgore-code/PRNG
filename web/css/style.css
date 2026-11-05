@@ -278,6 +278,49 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .fog { fill: var(--fog); }
 .player.torchlit use { filter: drop-shadow(0 0 4px #ffb347); }
 .player.noclip use { filter: drop-shadow(0 0 3px var(--spell)); }
+
+/* ---- Motion and "juice" (gated by the html.anim-* class) ---- */
+.pawn { transition: transform .11s linear; }
+.anim-off .pawn { transition: none; }
+.pawn .hop { transform-box: fill-box; transform-origin: 50% 100%; }
+.anim-full .pawn .hop.hopping { animation: pawn-hop .12s ease-out; }
+@keyframes pawn-hop { 40% { transform: translateY(-4px) scaleY(1.04); } 100% { transform: none; } }
+.anim-full .pawn.blink use, .anim-reduced .pawn.blink use { animation: pawn-blink .35s ease-out; }
+@keyframes pawn-blink { from { opacity: 0; transform: scale(.4); } }
+.pawn.blink use { transform-box: fill-box; transform-origin: center; }
+.pawn.dying use { transform-box: fill-box; transform-origin: 50% 90%; }
+.anim-full .pawn.dying use, .anim-reduced .pawn.dying use { animation: pawn-topple 1s ease-in forwards; }
+@keyframes pawn-topple { 30% { transform: rotate(-12deg); } 100% { transform: rotate(80deg) translateY(4px); opacity: .25; } }
+.board-wrap.dead::after { content: ''; position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(120, 10, 10, .15), rgba(80, 0, 0, .55)); animation: fade-in 1s ease-out both; }
+@keyframes fade-in { from { opacity: 0; } }
+.board-wrap.hurt::before { content: ''; position: absolute; inset: 0; border-radius: 10px; pointer-events: none; z-index: 1;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(200, 30, 30, .45)); animation: hurt-flash .45s ease-out forwards; }
+@keyframes hurt-flash { from { opacity: 1; } to { opacity: 0; } }
+.anim-full .board-wrap.hurt #board { animation: shake .3s ease-in-out; }
+@keyframes shake { 20% { transform: translate(-4px, 1px); } 40% { transform: translate(4px, -1px); } 60% { transform: translate(-3px, 0); } 80% { transform: translate(2px, 1px); } }
+.popup { font-family: var(--font); font-size: 15px; font-weight: bold; text-anchor: middle; paint-order: stroke; stroke: var(--paper); stroke-width: 3.5px; pointer-events: none; animation: popup-rise .95s ease-out forwards; }
+@keyframes popup-rise { 0% { opacity: 0; transform: translateY(4px); } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-20px); } }
+.pop-hurt { fill: #d1312a; } .pop-hit { fill: #f08a24; } .pop-heal { fill: #2a9d5c; } .pop-coin { fill: #c99700; } .pop-spell { fill: #7b4fc0; }
+.hit-flash { fill: #fff; opacity: .9; pointer-events: none; animation: hit-flash .28s ease-out forwards; }
+@keyframes hit-flash { to { opacity: 0; } }
+.coin-fly { position: fixed; z-index: 50; pointer-events: none; transform: translate(-50%, -50%); }
+.coin-fly .icon { width: 26px; height: 26px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .3)); }
+.stat.pulse { animation: stat-pulse .35s ease-out; }
+@keyframes stat-pulse { 40% { transform: scale(1.18); } }
+.anim-full .enemy-idle { animation: enemy-bob 2.4s ease-in-out infinite; }
+@keyframes enemy-bob { 50% { transform: translateY(-1.6px); } }
+.anim-full .stairs-glow { animation: stairs-glow 2.6s ease-in-out infinite; }
+@keyframes stairs-glow { 50% { filter: drop-shadow(0 0 4px rgba(255, 210, 63, .9)); } }
+.die.tumbling { animation: die-tumble .14s linear infinite; }
+@keyframes die-tumble { 0% { transform: perspective(120px) rotateX(0) rotateY(0); } 50% { transform: perspective(120px) rotateX(70deg) rotateY(40deg) scale(.9); } 100% { transform: perspective(120px) rotateX(0) rotateY(0); } }
+.anim-reduced .die.rolling, .anim-off .die.rolling { animation: none; }
+.curtain { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center; border-radius: 10px;
+  background: #15131c; pointer-events: none; opacity: 0; }
+.curtain[hidden] { display: none; }
+.curtain.show { animation: curtain .9s ease-in-out forwards; }
+.curtain span { font-family: var(--font); font-size: clamp(28px, 6vw, 52px); color: #f4e9d0; letter-spacing: 2px; }
+@keyframes curtain { 0% { opacity: 1; } 55% { opacity: 1; } 100% { opacity: 0; } }
 .arrow { cursor: pointer; }
 .arrow circle { fill: var(--accent); fill-opacity: .88; stroke: var(--ink); stroke-width: 1.8; }
 .arrow path { fill: none; stroke: #fff; stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; }

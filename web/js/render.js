@@ -365,6 +365,11 @@
     }
     if (o.done && !opened && o.type !== 'portal') out += use('i-cross', o.x, o.y);
     const cls = o.done && !opened ? 'obj done' : 'obj';
+    // Live enemies bob gently; a negative delay from the clock keeps the motion
+    // smooth even though this layer is redrawn every step.
+    if (o.type === 'enemy' && !o.done) {
+      return `<g class="${cls}" data-obj="${i}"><g class="enemy-idle" style="animation-delay:-${(Date.now() + i * 377) % 2400}ms">${out}</g></g>`;
+    }
     return `<g class="${cls}" data-obj="${i}">${out}</g>`;
   }
 
@@ -414,10 +419,9 @@
       }
     }
     // Stairs stay clearly marked once seen, drawn above the fog.
-    if (!dark || lit(L.stairs.x, L.stairs.y) || L.seenStairs) out += use('i-stairs', L.stairs.x, L.stairs.y);
+    if (!dark || lit(L.stairs.x, L.stairs.y) || L.seenStairs) out += `<g class="stairs-glow" style="animation-delay:-${Date.now() % 2600}ms">${use('i-stairs', L.stairs.x, L.stairs.y)}</g>`;
 
-    out += `<g class="player${s.invis ? ' invisible' : ''}${game.wallWalk() ? ' noclip' : ''}${game.isLit() ? ' torchlit' : ''}">${use(p.cls ? 'i-player-' + p.cls : 'i-player', p.x, p.y)}</g>`;
-
+    // (The player pawn is drawn in its own layer by the UI, so it can slide.)
     if (ui.aiming && !ui.busy) {
       // Range boost: enemies close enough to shoot directly.
       for (const i of game.freeTargets()) {

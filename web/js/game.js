@@ -57,6 +57,15 @@
 
     emit(type) { if (this.events) this.events.push(type); }
     drainEvents() { const e = this.events || []; this.events = []; return e; }
+    // Floating numbers for the UI (damage, healing, coins...). Not saved.
+    pop(x, y, text, kind) {
+      if (!this.s.level) return;
+      const q = this.popups || (this.popups = []);
+      q.push({ x, y, text, kind });
+      if (q.length > 40) q.shift();
+    }
+    popAtPlayer(text, kind) { this.pop(this.s.player.x, this.s.player.y, text, kind); }
+    drainPopups() { const p = this.popups || []; this.popups = []; return p; }
 
     static newState(seedText) {
       return {
@@ -85,7 +94,7 @@
         declinedPicks: [], pickTarget: -1,
         level: null, shop: null,
         log: [], logSeq: 0,
-        stats: { kills: 0, coins: 0, floorsCleared: 0 },
+        stats: { kills: 0, coins: 0, floorsCleared: 0, casts: 0, cause: null },
         floorStartTurn: 0,
         checkpoint: null,
       };
@@ -117,7 +126,7 @@
           ammo: p.ammo, dex: p.dex, lockpicks: p.lockpicks, spells: Object.assign({}, p.spells),
           cls: p.cls, level: p.level, known: Object.assign({}, p.known), range: p.range, moveBoost: p.moveBoost, power: p.power,
         },
-        stats: Object.assign({}, s.stats),
+        stats: { kills: s.stats.kills, coins: s.stats.coins, floorsCleared: s.stats.floorsCleared, casts: s.stats.casts || 0 },
         turn: s.turn,
       };
     }
@@ -138,7 +147,8 @@
       if (p.ammo !== undefined && !int(p.ammo, 0, 10000)) return 'bad ammo';
       if (p.dex !== undefined && !int(p.dex, 0, 1000)) return 'bad dexterity';
       if (p.lockpicks !== undefined && !int(p.lockpicks, 0, 10000)) return 'bad lock picks';
-      if (cp.stats !== undefined && !(obj(cp.stats) && ['kills', 'coins', 'floorsCleared'].every((k) => int(cp.stats[k], 0, 1e9)))) return 'bad stats';
+      if (cp.stats !== undefined && !(obj(cp.stats) && ['kills', 'coins', 'floorsCleared'].every((k) => int(cp.stats[k], 0, 1e9)) &&
+        (cp.stats.casts === undefined || int(cp.stats.casts, 0, 1e9)))) return 'bad stats';
       if (cp.turn !== undefined && !int(cp.turn, 0, 1e9)) return 'bad turn';
       if (cp.v === 2) return null;
       // Version 3: tutorial floors, class and level (all optional; missing
@@ -225,7 +235,7 @@
       });
       s.tutorial = !!cp.tutorial;
       for (const k of SPELL_IDS) { p.spells[k] = cpp.spells[k]; p.known[k] = cpp.known ? cpp.known[k] : 0; }
-      if (cp.stats) Object.assign(s.stats, { kills: cp.stats.kills, coins: cp.stats.coins, floorsCleared: cp.stats.floorsCleared });
+      if (cp.stats) Object.assign(s.stats, { kills: cp.stats.kills, coins: cp.stats.coins, floorsCleared: cp.stats.floorsCleared, casts: cp.stats.casts || 0 });
       s.turn = cp.turn || 0;
       g.log(`Resumed seed "${s.seedText}" at ${cp.tutorial ? 'tutorial ' + cp.floor : 'floor ' + cp.floor}.`);
       g.enterFloor(cp.floor);
@@ -775,9 +785,12 @@
     encounter(o) {
       const s = this.s, p = s.player;
       const dmg = R.enemyDamage(s.floor);
-      const name = o.stalker ? 'stalker' : 'enemy';
+      const name = o.mimic ? 'mimic' : o.stalker ? 'stalker' : 'enemy';
       p.hp = Math.max(0, p.hp - dmg);
       o.hp -= p.str;
+      s.stats.cause = `a ${name} on ${s.tutorial ? 'tutorial ' + s.floor : 'floor ' + s.floor}`;
+      this.popAtPlayer(`-${dmg}`, 'hurt');
+      this.pop(o.x, o.y, `-${p.str}`, 'hit');
       this.emit('hurt');
       this.emit(o.hp <= 0 ? 'kill' : 'hit');
       if (o.hp <= 0) {
@@ -813,6 +826,8 @@
       const dmg = R.enemyDamage(f) * (dodged ? 1 : 2);
       const hp = 2 * R.enemyHealth(f);
       p.hp = Math.max(0, p.hp - dmg);
+      s.stats.cause = `a mimic's ambush on floor ${f}`;
+      this.popAtPlayer(`-${dmg}`, 'hurt');
       Object.assign(o, { type: 'enemy', mimic: kind, hp, maxHp: hp });
       this.lastMimic = { x: o.x, y: o.y, kind, color: o.color, dodged, dmg };
       s.pickTarget = -1;
@@ -863,6 +878,7 @@
     }
     gainSpell(spell) {
       this.s.player.spells[spell]++;
+      this.popAtPlayer('+1 ✦', 'spell');
       return `a ${SPELLS[spell].name} charge`;
     }
     // Turn anything the new class can't use into coins.
@@ -997,6 +1013,7 @@
       this.emit(!target ? 'miss' : target.hp <= dmg ? 'kill' : 'hit');
       if (target) {
         target.hp -= dmg;
+        this.pop(target.x, target.y, `-${dmg}`, 'hit');
         const name = target.mimic ? 'mimic' : target.stalker ? 'stalker' : 'enemy';
         if (target.hp <= 0) { this.killEnemy(target, true); this.log(`Your ${what} fells the ${name}!`, 'fight'); }
         else this.log(`Your ${what} hits the ${name} (${target.hp}/${target.maxHp} left).`, 'fight');
@@ -1093,11 +1110,15 @@
       return true;
     }
 
-    gainCoins(v) { this.s.player.coins += v; this.s.stats.coins += v; }
+    gainCoins(v) {
+      this.s.player.coins += v; this.s.stats.coins += v;
+      this.popAtPlayer(`+${v}`, 'coin');
+    }
     heal(n) {
       const p = this.s.player;
       const before = p.hp;
       p.hp = Math.min(p.maxHp, p.hp + n);
+      if (p.hp > before) this.popAtPlayer(`+${p.hp - before}`, 'heal');
       return p.hp - before;
     }
 
@@ -1133,6 +1154,7 @@
       if (!this.canCast(name)) return false;
       const s = this.s, p = s.player, L = s.level, lv = this.castLevel(name);
       if (p.cls === 'wizard') p.casts--; else p.spells[name] -= R.CHARGES_PER_CAST;
+      s.stats.casts = (s.stats.casts || 0) + 1;
       const tag = `${SPELLS[name].name}${p.cls === 'wizard' ? ` (level ${lv})` : ''}`;
       if (name === 'invis') {
         s.invis = { turns: lv >= R.SPELL_MAX ? 5 : lv, level: lv, wall: false };

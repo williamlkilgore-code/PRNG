@@ -1099,6 +1099,27 @@ test('class checkpoints', () => {
   ok(o2 && o2.s.tutorial && o2.s.floor === 2, 'v2 tutorial floor');
 });
 
+test('popups and run stats (UI hooks)', () => {
+  const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
+  const g = sandbox(map, [{ type: 'coin', x: 2, y: 1 }, { type: 'enemy', x: 4, y: 1, hp: 2, maxHp: 2 }]);
+  g.drainPopups();
+  forceRoll(g, 3, 3); g.choose('E'); run(g);
+  const pp = g.drainPopups();
+  ok(pp.some((q) => q.kind === 'coin' && q.text === '+1' && q.x === 2), 'coin popup at the square');
+  ok(pp.some((q) => q.kind === 'hurt' && q.text === '-1' && q.x === 3) && pp.some((q) => q.kind === 'hit' && q.x === 4), 'damage popups');
+  ok(g.drainPopups().length === 0, 'drained');
+  ok(/enemy on floor/.test(g.s.stats.cause), 'cause of damage recorded: ' + g.s.stats.cause);
+  g.s.player.hp = 5; g.heal(2);
+  ok(g.drainPopups().some((q) => q.kind === 'heal' && q.text === '+2'), 'heal popup');
+  g.s.player.spells.invis = 3; g.s.phase = 'roll'; g.cast('invis');
+  ok(g.s.stats.casts === 1, 'casts counted');
+  const cp = JSON.parse(JSON.stringify(g.checkpointFor(2)));
+  ok(cp.stats.casts === 1 && cp.stats.cause === undefined && Game.fromSave(cp).game.s.stats.casts === 1, 'casts saved, cause not');
+  cp.stats.casts = -1;
+  ok(Game.fromSave(cp).error, 'bad casts rejected');
+  ok(!JSON.stringify(g.s).includes('popups'), 'popups never saved');
+});
+
 test('sound events', () => {
   const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
   const g = sandbox(map, [{ type: 'coin', x: 2, y: 1 }, { type: 'enemy', x: 4, y: 1, hp: 1, maxHp: 1 }, { type: 'web', x: 6, y: 1 }]);

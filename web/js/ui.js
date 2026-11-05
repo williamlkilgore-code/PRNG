@@ -89,6 +89,22 @@
       }
     } catch (e) { /* not supported */ }
   }
+  /* Presentation settings (one localStorage entry). `anim`: 'full', 'reduced'
+   * (slides and numbers only) or 'off'; a device asking for reduced motion
+   * always gets 'off'. `scenes`: cut-scenes on/off. */
+  const SETTINGS_KEY = 'dicedelve-settings-v1';
+  const settings = (() => {
+    const d = { anim: 'full', scenes: store.get(FX_KEY) !== '0' };
+    try { return Object.assign(d, JSON.parse(store.get(SETTINGS_KEY) || '{}')); } catch (e) { return d; }
+  })();
+  const saveSettings = () => store.set(SETTINGS_KEY, JSON.stringify(settings));
+  const animLevel = () => (reducedMotion ? 'off' : ['full', 'reduced', 'off'].includes(settings.anim) ? settings.anim : 'full');
+  function applySettings() {
+    const root = document.documentElement;
+    root.classList.remove('anim-full', 'anim-reduced', 'anim-off');
+    root.classList.add('anim-' + animLevel());
+  }
+
   // Auto-save writes the checkpoint, which only changes when a floor starts or is finished.
   let lastSaved = null;
   const save = () => {
@@ -122,14 +138,122 @@
   // Engine events (coin, hit, web, ...) become sound effects; the music
   // follows the floor's mood.
   function playEvents() {
+    for (const pp of game.drainPopups()) showPopup(pp);
     for (const e of game.drainEvents()) {
       AU.sfx(e);
+      if (e === 'hurt') hurtFx();
       if (e === 'kill' && game.lastKill) queueScene({ type: 'kill', at: game.lastKill });
       else if (e === 'mimic' && game.lastMimic) queueScene({ type: 'mimic', at: game.lastMimic });
       else if (e === 'levelUp') queueScene({ type: 'levelUp', level: game.s.player.level + game.levelsOwed(), cls: game.s.player.cls });
       else if (e === 'classChosen') queueScene({ type: 'class', cls: game.s.player.cls });
     }
   }
+  // ------------------------------------------------------------- board juice
+  // Floating numbers over a square, rising and fading.
+  function showPopup(pp) {
+    const layer = $('#board .fx-layer');
+    if (!layer || animLevel() === 'off') return;
+    const key = pp.x + ',' + pp.y, now = Date.now();
+    ui.popStack = ui.popStack && now - ui.popStack.t < 400 ? ui.popStack : { t: now, n: {} };
+    const k = ui.popStack.n[key] = (ui.popStack.n[key] || 0) + 1;
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('class', 'popup pop-' + pp.kind);
+    t.setAttribute('x', (pp.x + 0.5) * RD.C);
+    t.setAttribute('y', pp.y * RD.C + 6 - (k - 1) * 13);
+    t.textContent = pp.text;
+    layer.appendChild(t);
+    setTimeout(() => t.remove(), 950);
+    if (animLevel() === 'full') {
+      if (pp.kind === 'coin') coinFlight(pp.x, pp.y);
+      if (pp.kind === 'hit') {
+        const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        c.setAttribute('class', 'hit-flash');
+        c.setAttribute('cx', (pp.x + 0.5) * RD.C); c.setAttribute('cy', (pp.y + 0.5) * RD.C); c.setAttribute('r', RD.C * 0.42);
+        layer.appendChild(c);
+        setTimeout(() => c.remove(), 300);
+      }
+    }
+  }
+  // A coin flies from the square to the coin counter in the top bar.
+  function coinFlight(x, y) {
+    const svg = $('#board'), m = svg.getScreenCTM(), dest = $('#coinStat');
+    if (!m || !dest || !document.body.animate) return;
+    const pt = new DOMPoint((x + 0.5) * RD.C, (y + 0.5) * RD.C).matrixTransform(m);
+    const r = dest.getBoundingClientRect();
+    const el = document.createElement('div');
+    el.className = 'coin-fly';
+    el.innerHTML = RD.icon('i-coin');
+    el.style.left = pt.x + 'px'; el.style.top = pt.y + 'px';
+    document.body.appendChild(el);
+    const dx = r.left + 14 - pt.x, dy = r.top + r.height / 2 - pt.y;
+    const a = el.animate([
+      { transform: 'translate(-50%, -50%) scale(1)' },
+      { transform: `translate(calc(-50% + ${dx * 0.5}px), calc(-50% + ${dy * 0.5 - 40}px)) scale(1.15)`, offset: 0.45 },
+      { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(.55)`, opacity: 0.7 },
+    ], { duration: 650, easing: 'ease-in' });
+    a.onfinish = () => {
+      el.remove();
+      const c = $('#coinStat');
+      if (c) { c.classList.remove('pulse'); void c.offsetWidth; c.classList.add('pulse'); }
+    };
+  }
+  // Taking damage: a red flash over the board (and a small shake).
+  function hurtFx() {
+    if (animLevel() === 'off') return;
+    const w = $('#board').parentElement;
+    w.classList.remove('hurt'); void w.offsetWidth; w.classList.add('hurt');
+    clearTimeout(ui.hurtTimer);
+    ui.hurtTimer = setTimeout(() => w.classList.remove('hurt'), 450);
+  }
+  // The pawn lives in its own layer so it can slide between squares.
+  function renderPawn() {
+    const s = game.s, layer = $('#board .pawn-layer');
+    if (!layer || !s.level) return;
+    const p = s.player, C = RD.C, sym = '#' + (p.cls ? 'i-player-' + p.cls : 'i-player');
+    let pawn = layer.querySelector('#pawn');
+    if (!pawn) {
+      layer.innerHTML = `<g id="pawn"><g class="hop"><use width="${C}" height="${C}"/></g></g>`;
+      pawn = layer.querySelector('#pawn');
+      ui.pawnAt = null;
+    }
+    const u = pawn.querySelector('use');
+    if (u.getAttribute('href') !== sym) u.setAttribute('href', sym);
+    pawn.setAttribute('class', 'player pawn' + (s.invis ? ' invisible' : '') + (game.wallWalk() ? ' noclip' : '') +
+      (game.isLit() ? ' torchlit' : '') + (s.phase === 'dead' ? ' dying' : ''));
+    const prev = ui.pawnAt;
+    if (prev && prev[0] === p.x && prev[1] === p.y) return;
+    const jump = !prev || ui.teleport || Math.max(Math.abs(prev[0] - p.x), Math.abs(prev[1] - p.y)) > 4;
+    if (jump) pawn.style.transition = 'none';
+    pawn.style.transform = `translate(${p.x * C}px, ${p.y * C}px)`;
+    if (jump) {
+      void pawn.getBoundingClientRect();
+      pawn.style.transition = '';
+      if (prev) { pawn.classList.remove('blink'); void pawn.getBoundingClientRect(); pawn.classList.add('blink'); }
+    } else {
+      const hop = pawn.querySelector('.hop');
+      hop.classList.remove('hopping'); void hop.getBoundingClientRect(); hop.classList.add('hopping');
+    }
+    ui.pawnAt = [p.x, p.y];
+  }
+  // "Floor 7" title card between floors.
+  function floorCurtain(text) {
+    const el = $('#curtain');
+    if (!el || animLevel() !== 'full') return;
+    el.innerHTML = `<span>${esc(text)}</span>`;
+    el.hidden = false;
+    el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+    clearTimeout(ui.curtainTimer);
+    ui.curtainTimer = setTimeout(() => { el.hidden = true; }, 900);
+  }
+  // Dice tumble through random faces before landing.
+  async function tumbleDice() {
+    const btns = [...document.querySelectorAll('#dice .die-pick')];
+    for (let k = 0; k < 6; k++) {
+      btns.forEach((b) => { b.innerHTML = RD.dieSvg(1 + Math.floor(Math.random() * 6), 'tumbling'); });
+      await sleep(70);
+    }
+  }
+
   function syncMusic() {
     const s = game.s;
     let mood = 'floor';
@@ -153,7 +277,11 @@
       ${row('sfx', 'Sound effects')}
       ${row('music', 'Music')}
       <label class="check"><input type="checkbox" id="muteAll" ${st.muted ? 'checked' : ''}> Mute everything <span class="muted">(M key)</span></label>
-      <label class="check"><input type="checkbox" id="fxOn" ${fx.on ? 'checked' : ''}> Cut-scenes (kills, mimics, level-ups)${reducedMotion ? ' <span class="muted">· off while your device asks for reduced motion</span>' : ''}</label>
+      <label class="check"><input type="checkbox" id="fxOn" ${settings.scenes ? 'checked' : ''}> Cut-scenes (kills, mimics, level-ups)${reducedMotion ? ' <span class="muted">· off while your device asks for reduced motion</span>' : ''}</label>
+      <label class="sound-row">Animations
+        <select id="animSel" ${reducedMotion ? 'disabled' : ''}>
+          ${[['full', 'Full'], ['reduced', 'Reduced (slides and numbers only)'], ['off', 'Off']].map(([v, t]) => `<option value="${v}" ${animLevel() === v ? 'selected' : ''}>${t}</option>`).join('')}
+        </select></label>
       <p class="muted">All sounds are generated in your browser. The music changes with the floor: calmer in the tutorial, tense on dark floors, cheerful in shops.</p>
       <div class="row">
         <button class="btn" type="button" id="soundTest">Test</button>
@@ -165,7 +293,8 @@
     });
     $('#muteAll').addEventListener('change', (e) => { if (AU.settings.muted !== e.target.checked) AU.toggleMute(); renderSoundBtn(); });
     $('#soundTest').addEventListener('click', () => { AU.unlock(); AU.sfx('coin'); });
-    $('#fxOn').addEventListener('change', (e) => { fx.on = e.target.checked; store.set(FX_KEY, fx.on ? '1' : '0'); });
+    $('#fxOn').addEventListener('change', (e) => { settings.scenes = e.target.checked; saveSettings(); });
+    $('#animSel').addEventListener('change', (e) => { settings.anim = e.target.value; saveSettings(); applySettings(); });
   }
   function renderSoundBtn() {
     const b = $('#soundBtn');
@@ -276,7 +405,7 @@
       ${p.cls === 'wizard' || p.cls === 'rogue' ? `<span class="stat" title="Ranged damage">${RD.icon(p.cls === 'wizard' ? 'i-missile' : 'i-sling')}<b>${game.rangedDamage()}</b></span>` : ''}
       ${p.moveBoost ? `<span class="stat" title="Move boost: up to ${p.moveBoost} extra squares">${RD.icon('i-cls-rogue')}<b>+${p.moveBoost}</b></span>` : ''}
       ${p.lockpicks ? `<span class="stat" title="Lock picks">${RD.icon('i-lockpick')}<b>${p.lockpicks}</b></span>` : ''}
-      <span class="stat" title="Coins">${RD.icon('i-coin')}<b>${p.coins}</b></span>
+      <span class="stat" id="coinStat" title="Coins">${RD.icon('i-coin')}<b>${p.coins}</b></span>
       ${keys ? `<span class="stat" title="Keys">${keys}</span>` : ''}
       ${s.level && s.level.dark ? `<span class="stat dark-stat" title="${s.level.torchLit ? 'Dark floor, torch lit' : 'Dark floor'}">${RD.icon(s.level.torchLit ? 'i-torch' : 'i-moon')}<b>${s.level.torchLit ? 'Lit' : 'Dark'}</b></span>` : ''}
       <span class="stat muted stat-turn" title="Turns taken">Turn ${s.turn + 1}</span>`;
@@ -287,15 +416,18 @@
     const key = s.level ? boardKeyOf(s) : `shop:${s.floor}`;
     if (ui.boardKey !== key) {
       ui.boardKey = key;
+      if (ui.hadBoard) floorCurtain(s.level ? floorName(s) + (s.level.dark ? ' · dark' : '') : `Floor ${s.floor} · Shop`);
+      ui.hadBoard = true;
       if (s.level) {
         svg.setAttribute('viewBox', `0 0 ${s.level.w * RD.C} ${s.level.h * RD.C}`);
-        svg.innerHTML = `<g class="static">${RD.staticLayer(s.level)}</g><g class="dyn"></g><g class="preview-layer"></g><g class="fx-layer"></g>`;
+        svg.innerHTML = `<g class="static">${RD.staticLayer(s.level)}</g><g class="dyn"></g><g class="pawn-layer"></g><g class="preview-layer"></g><g class="fx-layer"></g>`;
       } else {
         svg.setAttribute('viewBox', `0 0 ${17 * RD.C} ${13 * RD.C}`);
         svg.innerHTML = `<g class="static">${RD.shopScene()}</g><g class="dyn"></g><g class="preview-layer"></g>`;
       }
     }
     if (s.level) svg.querySelector('.dyn').innerHTML = RD.dynamicLayer(game, ui);
+    renderPawn();
     renderPreview();
   }
 
@@ -499,7 +631,9 @@
     render();
     while (game.s.phase === 'moving') {
       const ev = game.step();
+      ui.teleport = ev.type === 'teleport';
       render();
+      ui.teleport = false;
       if (ev.type === 'pick') break;
       await sleep(ev.type === 'teleport' ? 380 : ev.type === 'fight' || ev.type === 'web' ? 300 : 120);
     }
@@ -547,10 +681,11 @@
     $('#pickNo').addEventListener('click', () => done(() => game.declinePick()));
   }
 
-  function roll() {
+  async function roll() {
     if (ui.busy) return;
     if (game.levelsOwed() > 0) { afterPhase(); return; } // choose first
     if (!game.roll()) return;
+    if (animLevel() === 'full') { ui.busy = true; render(); await tumbleDice(); ui.busy = false; }
     ui.rolled = true;
     render();
     save();
@@ -561,7 +696,12 @@
     if (game.levelsOwed() > 0 && game.s.phase !== 'dead') { whenScenesDone(showLevelChoice); return; }
     const ph = game.s.phase;
     if (ph === 'levelDone') { recordBest(); setTimeout(showLevelDone, reducedMotion ? 0 : 350); }
-    else if (ph === 'dead') { recordBest(); store.del(SAVE_KEY); lastSaved = null; setTimeout(showDead, reducedMotion ? 0 : 500); }
+    else if (ph === 'dead') {
+      recordBest(); store.del(SAVE_KEY); lastSaved = null;
+      const off = animLevel() === 'off';
+      if (!off) $('#board').parentElement.classList.add('dead');
+      setTimeout(showDead, off ? 0 : 1300);
+    }
     else if (ph === 'shop') showShop();
   }
 
@@ -638,9 +778,9 @@
   /* Short animations for kills (on the map square), and for mimic ambushes,
    * level-ups and class choices (over the map). They never hold up the game:
    * the state has already changed. Tap to skip; turn off in Sound & effects. */
-  const fx = { on: store.get(FX_KEY) !== '0' };
+
   ui.scenes = []; ui.scene = null; ui.sceneWaiters = [];
-  const fxEnabled = () => fx.on && !reducedMotion;
+  const fxEnabled = () => settings.scenes && !reducedMotion;
   function queueScene(sc) {
     if (!fxEnabled()) return;
     if (sc.type === 'kill') { killFx(sc.at); return; }
@@ -916,7 +1056,8 @@
 
   function startWith(g) {
     game = g;
-    ui.boardKey = null; ui.aiming = false; ui.shotFlash = null; ui.preview = null; ui.busy = false;
+    ui.boardKey = null; ui.aiming = false; ui.shotFlash = null; ui.preview = null; ui.busy = false; ui.hadBoard = false;
+    $('#board').parentElement.classList.remove('dead', 'hurt');
     ui.journalSeen = g.s.logSeq || 0;
     ui.toastSeq = (g.s.logSeq || 1) - 1;
     ui.hintQueue = []; ui.hintFloor = null; ui.hintsReady = true;
@@ -1318,6 +1459,7 @@
   // -------------------------------------------------------------------- boot
   async function boot() {
     applyTheme(store.get(THEME_KEY));
+    applySettings();
     // Wait briefly for the IndexedDB backup (it never blocks for long).
     await Promise.race([restoreMirror().catch(() => {}), new Promise((r) => setTimeout(r, 600))]);
     try { if (navigator.storage && navigator.storage.persisted) storageInfo.persisted = await navigator.storage.persisted(); } catch (e) { /* not supported */ }
