@@ -394,11 +394,11 @@
     const lo = R.levelThreshold(p.level), hi = R.levelThreshold(p.level + 1);
     const prog = Math.max(0, Math.min(1, (s.stats.kills - lo) / (hi - lo)));
     $('#stats').innerHTML = `
-      <span class="stat" title="${s.tutorial ? 'Tutorial floor (does not count)' : 'Floor'}">${RD.icon('i-stairs')}<b>${floorName(s)}</b></span>
+      <span class="stat plaque" title="${s.tutorial ? 'Tutorial floor (does not count)' : 'Floor'}">${RD.icon('i-stairs')}<b>${floorName(s)}</b></span>
       <span class="stat cls-stat${p.cls === 'wizard' ? ' clickable' : ''}" ${p.cls === 'wizard' ? 'role="button" tabindex="0" id="spellbookBtn"' : ''} title="${C ? C.name : 'Base hero'}, level ${p.level}: ${s.stats.kills} kills, next level at ${hi}">${RD.icon('i-cls-' + (p.cls || 'base'))}<b>${C ? 'Lv ' + p.level : 'Hero'}</b>
         <span class="xpbar"><span style="width:${(100 * prog).toFixed(0)}%"></span></span></span>
       <span class="stat" title="Health">${RD.icon('i-heart')}<b>${p.hp}/${p.maxHp}</b>
-        <span class="hpbar"><span style="width:${(100 * p.hp) / p.maxHp}%"></span></span></span>
+        <span class="hpbar ${p.hp / p.maxHp <= 0.25 ? 'low' : p.hp / p.maxHp <= 0.5 ? 'mid' : 'ok'}"><span style="width:${(100 * p.hp) / p.maxHp}%"></span></span></span>
       <span class="stat" title="Strength">${RD.icon('i-sp-str')}<b>${p.str}</b></span>
       <span class="stat" title="Dexterity">${RD.icon('i-sp-dex', '', '#7b4fc0')}<b>${p.dex}</b></span>
       ${p.range ? `<span class="stat" title="Range: shoot enemies within ${p.range} steps">${RD.icon('i-missile')}<b>${p.range}</b></span>` : ''}
@@ -558,7 +558,8 @@
   function showJournal() {
     ui.journalSeen = game.s.logSeq || 0;
     renderJournal();
-    const items = game.s.log.slice().reverse().map((l) => `<li class="log-${l.kind}">${esc(l.text)}</li>`).join('');
+    const LOG_ICON = { fight: 'i-enemy', good: 'i-coin', spell: 'i-sp-orb', status: 'i-web', warn: 'i-stairs', floor: 'i-stairs', shop: 'i-sp-gamble', bad: 'i-cross', roll: 'i-sp-reroll' };
+    const items = game.s.log.slice().reverse().map((l) => `<li class="log-${l.kind}">${LOG_ICON[l.kind] ? RD.icon(LOG_ICON[l.kind], 'log-icon') : '<span class="log-icon"></span>'}<span>${esc(l.text)}</span></li>`).join('');
     openModal(`
       <h2>Journal</h2>
       <ol class="log">${items || '<li class="muted">Nothing yet.</li>'}</ol>
@@ -725,8 +726,8 @@
         <h2>Choose your class</h2>
         <p>${game.s.stats.kills} kills: you've proven yourself. Pick a path for the rest of the run.</p>
         <div class="class-cards">
-          ${DC.CLASS_IDS.map((id) => `<button type="button" class="class-card" data-cls="${id}">
-            ${RD.icon(CLASS_INFO[id].icon, 'class-icon')}
+          ${DC.CLASS_IDS.map((id) => `<button type="button" class="class-card cls-${id}" data-cls="${id}">
+            ${RD.icon('i-player-' + id, 'class-icon big')}
             <span class="name">${R.CLASSES[id].name}</span>
             <span class="desc">${CLASS_INFO[id].blurb}</span>
             <ul>${CLASS_INFO[id].perks.map((t) => `<li>${t}</li>`).join('')}</ul></button>`).join('')}
@@ -1024,8 +1025,7 @@
     const playTut = tutPref === null ? !best() : tutPref === '1';
     const b = best();
     openModal(`
-      <h2>Dice Delve</h2>
-      <div class="hero">${RD.icon('i-start')}${RD.icon('i-sp-orb')}${RD.icon('i-enemy')}${RD.icon('i-chest')}${RD.icon('i-stairs')}</div>
+      <div class="title-art"><svg viewBox="0 0 320 170" aria-hidden="true"><use href="#i-logo"/></svg><h2 class="title-word">Dice Delve</h2></div>
       <p>A roll-and-write dungeon crawl. Roll two dice, keep one, pick a direction, and slide through procedurally generated floors to reach the staircase.</p>
       ${b ? `<p class="muted">Deepest floor reached: ${b}</p>` : ''}
       <h3>Seed</h3>
@@ -1310,13 +1310,24 @@
 
   function showDead() {
     const s = game.s;
+    const p = s.player;
+    const stat = (icon, label, value) => `<div class="sum-stat">${RD.icon(icon)}<span class="muted">${label}</span><b>${value}</b></div>`;
     openModal(`
       <h2>You have fallen</h2>
-      <div class="hero">${RD.icon('i-enemy')}</div>
-      <p>Reached: <b>${floorName(s)}</b> · Floors cleared: ${s.stats.floorsCleared}</p>
-      <p>${s.player.cls ? `${R.CLASSES[s.player.cls].name}, level ${s.player.level}` : 'Base hero, no class yet'}</p>
-      <p>Enemies slain: ${s.stats.kills} · Coins earned: ${s.stats.coins} · Turns: ${s.turn}</p>
-      <p class="muted">Seed "${esc(s.seedText)}" · Deepest ever: ${best()}</p>
+      <p class="epitaph">${RD.icon(p.cls ? 'i-player-' + p.cls : 'i-player', 'epitaph-icon')}
+        <span>${p.cls ? `A level ${p.level} ${R.CLASSES[p.cls].name}` : 'A hero without a class'} reached <b>${floorName(s)}</b>${s.stats.cause ? `, slain by ${esc(s.stats.cause)}` : ''}.</span></p>
+      <div class="summary">
+        <div class="sum-stats">
+          ${stat('i-stairs', 'Floors cleared', s.stats.floorsCleared)}
+          ${stat('i-enemy', 'Enemies slain', s.stats.kills)}
+          ${stat('i-coin', 'Coins earned', s.stats.coins)}
+          ${stat('i-sp-orb', 'Spells cast', s.stats.casts || 0)}
+          ${stat('i-sp-reroll', 'Turns', s.turn + 1)}
+          ${stat('i-levelup', 'Deepest ever', best())}
+        </div>
+        ${s.level ? `<div class="sum-map">${RD.miniMap(game)}<span class="muted">Your final floor</span></div>` : ''}
+      </div>
+      <p class="muted">Seed "${esc(s.seedText)}"</p>
       <div class="row">
         <button class="btn primary" type="button" id="againBtn">Same seed</button>
         <button class="btn" type="button" id="newRunBtn">New dungeon</button>

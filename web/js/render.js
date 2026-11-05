@@ -282,6 +282,20 @@
     <path d="M10 18.8l2.2 2" style="fill:none;stroke:#7a4a1c;stroke-linecap:round" stroke-width="1.8"/>
   </symbol>
 
+  <symbol id="i-logo" viewBox="0 0 320 170">
+    <path d="M40 160V78Q40 18 160 18Q280 18 280 78V160" style="fill:#3b3540;stroke:#2b2a33" stroke-width="6"/>
+    <path d="M58 160V84Q58 38 160 38Q262 38 262 84V160" style="fill:#17151d"/>
+    <path d="M40 78Q40 18 160 18Q280 18 280 78" style="fill:none;stroke:#8f8a7c;stroke-dasharray:22 6" stroke-width="10"/>
+    <path d="M88 160l20-30h104l20 30Z" style="fill:#2b2733"/>
+    <path d="M104 136h112M96 148h128" style="fill:none;stroke:#4a4552" stroke-width="3"/>
+    <g transform="translate(98 74) rotate(-14)"><rect width="46" height="46" rx="9" style="fill:#fffdf6;stroke:#2b2a33" stroke-width="4"/>
+      <circle cx="12" cy="12" r="5" style="fill:#2b2a33"/><circle cx="23" cy="23" r="5" style="fill:#c8372d"/><circle cx="34" cy="34" r="5" style="fill:#2b2a33"/></g>
+    <g transform="translate(176 70) rotate(12)"><rect width="46" height="46" rx="9" style="fill:#fffdf6;stroke:#2b2a33" stroke-width="4"/>
+      <circle cx="12" cy="12" r="5" style="fill:#2b2a33"/><circle cx="34" cy="12" r="5" style="fill:#2b2a33"/><circle cx="12" cy="34" r="5" style="fill:#2b2a33"/><circle cx="34" cy="34" r="5" style="fill:#2b2a33"/></g>
+    <path d="M50 66q8-14 4-28M270 66q-8-14-4-28" style="fill:none;stroke:#f08a24;stroke-linecap:round" stroke-width="5"/>
+    <circle cx="52" cy="34" r="6" style="fill:#ffd23f"/><circle cx="268" cy="34" r="6" style="fill:#ffd23f"/>
+  </symbol>
+
   <symbol id="i-cross" viewBox="0 0 32 32">
     <path d="M7 8Q16 15 25 25M25 7Q17 16 7.5 25" style="fill:none;stroke:var(--pencil);stroke-linecap:round" stroke-width="2.4"/>
   </symbol>
@@ -496,6 +510,16 @@
     return out;
   }
 
+  // A small picture of a floor: layout, the path walked, stairs and the hero.
+  function miniMap(game) {
+    const L = game.s.level, p = game.s.player;
+    if (!L) return '';
+    const trail = L.trail.map((seg) => (seg.length > 1 ? `<polyline class="trail" points="${seg.map(([x, y]) => `${center(x)},${center(y)}`).join(' ')}"/>` : '')).join('');
+    return `<svg class="minimap" viewBox="0 0 ${L.w * C} ${L.h * C}" role="img" aria-label="Map of the final floor">
+      ${staticLayer(Object.assign({}, L, { dark: false }))}${trail}${use('i-stairs', L.stairs.x, L.stairs.y)}
+      ${use(p.cls ? 'i-player-' + p.cls : 'i-player', p.x, p.y)}</svg>`;
+  }
+
   // Dashed straight-line preview of the hovered direction (its own layer so
   // hovering never re-creates the clickable arrows).
   function previewLayer(game, preview, shot) {
@@ -557,5 +581,5 @@
     return `<svg viewBox="0 0 32 32" class="icon ${cls || ''}" aria-hidden="true"${color ? ` style="color:${color}"` : ''}><use href="#${id}"/></svg>`;
   }
 
-  DC.render = { C, COLORS, SYMBOLS, boardShell, staticLayer, dynamicLayer, previewLayer, shopScene, dieSvg, icon };
+  DC.render = { C, COLORS, SYMBOLS, boardShell, staticLayer, dynamicLayer, previewLayer, shopScene, dieSvg, icon, miniMap };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -788,7 +788,7 @@
       const name = o.mimic ? 'mimic' : o.stalker ? 'stalker' : 'enemy';
       p.hp = Math.max(0, p.hp - dmg);
       o.hp -= p.str;
-      s.stats.cause = `a ${name} on ${s.tutorial ? 'tutorial ' + s.floor : 'floor ' + s.floor}`;
+      s.stats.cause = `${name === 'enemy' ? 'an' : 'a'} ${name} on ${s.tutorial ? 'tutorial ' + s.floor : 'floor ' + s.floor}`;
       this.popAtPlayer(`-${dmg}`, 'hurt');
       this.pop(o.x, o.y, `-${p.str}`, 'hit');
       this.emit('hurt');
