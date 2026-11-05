@@ -6,6 +6,12 @@
   <title>Dice Delve</title>
   <meta name="description" content="A procedurally generated roll-and-write dungeon crawler. Roll two dice, slide through the dungeon, find the stairs.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' rx='6' fill='%23fffdf6' stroke='%232b2a33' stroke-width='2'/%3E%3Ccircle cx='10' cy='10' r='2.6' fill='%232b2a33'/%3E%3Ccircle cx='16' cy='16' r='2.6' fill='%23c8372d'/%3E%3Ccircle cx='22' cy='22' r='2.6' fill='%232b2a33'/%3E%3C/svg%3E">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#fffaf0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Dice Delve">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap">
@@ -29,8 +35,9 @@
         <button class="ghost-btn" id="helpBtn" type="button" title="How to play">Rules</button>
         <button class="ghost-btn" id="menuBtn" type="button" title="New game">New</button>
         <button class="ghost-btn" id="savesBtn" type="button" title="Save, load, export or import games">Saves</button>
-        <button class="ghost-btn" id="soundBtn" type="button" title="Sound settings (M to mute)" aria-label="Sound settings"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7.5h3l4-3.5v12l-4-3.5H3Z" style="fill:currentColor"/><path class="waves" d="M13 7a4 4 0 0 1 0 6M15.5 5a7 7 0 0 1 0 10" style="fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round"/><path class="slash" d="M3 3l14 14" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/></svg><span class="label">Sound</span></button>
-        <button class="ghost-btn" id="themeBtn" type="button" title="Toggle light/dark" aria-label="Toggle light/dark"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" style="fill:none;stroke:currentColor" stroke-width="2"/><path d="M10 2a8 8 0 0 1 0 16Z" style="fill:currentColor"/></svg><span class="label">Theme</span></button>
+        <button class="ghost-btn" id="soundBtn" type="button" title="Settings: sound, animations, theme, text size (M to mute)" aria-label="Settings"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.6 1.8h2.8l.5 2.3 1.6.9 2.2-.8 1.4 2.4-1.8 1.6v1.6l1.8 1.6-1.4 2.4-2.2-.8-1.6.9-.5 2.3H8.6l-.5-2.3-1.6-.9-2.2.8-1.4-2.4 1.8-1.6V8.2L2.9 6.6l1.4-2.4 2.2.8 1.6-.9Z" style="fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round"/><circle cx="10" cy="9.8" r="2.6" style="fill:none;stroke:currentColor;stroke-width:1.6"/><path class="slash" d="M3 3l14 14" style="fill:none;stroke-width:2;stroke-linecap:round"/></svg><span class="label">Settings</span></button>
+        <button class="ghost-btn" id="themeBtn" type="button" title="Theme: parchment, dungeon or high contrast" aria-label="Change theme"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" style="fill:none;stroke:currentColor" stroke-width="2"/><path d="M10 2a8 8 0 0 1 0 16Z" style="fill:currentColor"/></svg><span class="label">Theme</span></button>
+        <button class="ghost-btn" id="fullBtn" type="button" title="Fullscreen" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" style="fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round"/></svg><span class="label">Fullscreen</span></button>
       </div>
     </div>
   </header>

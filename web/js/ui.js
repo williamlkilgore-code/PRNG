@@ -94,7 +94,7 @@
    * always gets 'off'. `scenes`: cut-scenes on/off. */
   const SETTINGS_KEY = 'dicedelve-settings-v1';
   const settings = (() => {
-    const d = { anim: 'full', scenes: store.get(FX_KEY) !== '0' };
+    const d = { anim: 'full', scenes: store.get(FX_KEY) !== '0', haptics: true, text: 1 };
     try { return Object.assign(d, JSON.parse(store.get(SETTINGS_KEY) || '{}')); } catch (e) { return d; }
   })();
   const saveSettings = () => store.set(SETTINGS_KEY, JSON.stringify(settings));
@@ -103,6 +103,13 @@
     const root = document.documentElement;
     root.classList.remove('anim-full', 'anim-reduced', 'anim-off');
     root.classList.add('anim-' + animLevel());
+    root.style.setProperty('--ui-scale', [1, 1.15, 1.3].includes(+settings.text) ? settings.text : 1);
+  }
+  // A short buzz on phones that support it (Android browsers).
+  const HAPTIC = { hurt: 35, kill: 20, levelUp: [30, 50, 30], classChosen: [30, 50, 30], mimic: [60, 40, 90], death: [80, 60, 160] };
+  function haptic(e) {
+    if (!settings.haptics || !HAPTIC[e]) return;
+    try { if (navigator.vibrate) navigator.vibrate(HAPTIC[e]); } catch (err) { /* not supported */ }
   }
 
   // Auto-save writes the checkpoint, which only changes when a floor starts or is finished.
@@ -141,6 +148,7 @@
     for (const pp of game.drainPopups()) showPopup(pp);
     for (const e of game.drainEvents()) {
       AU.sfx(e);
+      haptic(e);
       if (e === 'hurt') hurtFx();
       if (e === 'kill' && game.lastKill) queueScene({ type: 'kill', at: game.lastKill });
       else if (e === 'mimic' && game.lastMimic) queueScene({ type: 'mimic', at: game.lastMimic });
@@ -271,18 +279,30 @@
         <label class="check"><input type="checkbox" id="${bus}On" ${st[bus + 'On'] ? 'checked' : ''}> ${label}</label>
         <input type="range" id="${bus}Vol" min="0" max="100" value="${Math.round((st[bus] || 0) * 100)}" aria-label="${label} volume">
       </div>`;
+    const opt = (list, cur) => list.map(([v, t]) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${t}</option>`).join('');
+    const theme = document.documentElement.getAttribute('data-theme') || 'auto';
     openModal(`
-      <h2>Sound &amp; effects</h2>
+      <div class="settings">
+      <h2>Settings</h2>
+      <h3>Sound</h3>
       ${AU.available ? '' : '<p class="notice bad">This browser doesn\'t support Web Audio, so the game is silent.</p>'}
       ${row('sfx', 'Sound effects')}
       ${row('music', 'Music')}
       <label class="check"><input type="checkbox" id="muteAll" ${st.muted ? 'checked' : ''}> Mute everything <span class="muted">(M key)</span></label>
-      <label class="check"><input type="checkbox" id="fxOn" ${settings.scenes ? 'checked' : ''}> Cut-scenes (kills, mimics, level-ups)${reducedMotion ? ' <span class="muted">· off while your device asks for reduced motion</span>' : ''}</label>
-      <label class="sound-row">Animations
-        <select id="animSel" ${reducedMotion ? 'disabled' : ''}>
-          ${[['full', 'Full'], ['reduced', 'Reduced (slides and numbers only)'], ['off', 'Off']].map(([v, t]) => `<option value="${v}" ${animLevel() === v ? 'selected' : ''}>${t}</option>`).join('')}
-        </select></label>
+      <h3>Motion</h3>
+      <div class="setting-row"><span>Animations</span>
+        <select id="animSel" ${reducedMotion ? 'disabled' : ''}>${opt([['full', 'Full'], ['reduced', 'Reduced (slides and numbers)'], ['off', 'Off']], animLevel())}</select></div>
+      <label class="check"><input type="checkbox" id="fxOn" ${settings.scenes ? 'checked' : ''}> Cut-scenes (kills, mimics, level-ups)</label>
+      ${reducedMotion ? '<p class="muted">Your device asks for reduced motion, so animations and cut-scenes stay off.</p>' : ''}
+      <h3>Display</h3>
+      <div class="setting-row"><span>Theme</span>
+        <select id="themeSel">${opt([['auto', 'Match my device'], ['light', 'Parchment'], ['dark', 'Dungeon'], ['contrast', 'High contrast (colourblind-safe)']], theme)}</select></div>
+      <div class="setting-row"><span>Text size</span>
+        <select id="textSel">${opt([[1, 'Normal'], [1.15, 'Large'], [1.3, 'Extra large']], settings.text)}</select></div>
+      <h3>Phone</h3>
+      <label class="check"><input type="checkbox" id="hapticOn" ${settings.haptics ? 'checked' : ''}> Vibrate on hits and level-ups <span class="muted">(Android browsers)</span></label>
       <p class="muted">All sounds are generated in your browser. The music changes with the floor: calmer in the tutorial, tense on dark floors, cheerful in shops.</p>
+      </div>
       <div class="row">
         <button class="btn" type="button" id="soundTest">Test</button>
         <button class="btn primary" type="button" data-close>Done</button>
@@ -295,6 +315,9 @@
     $('#soundTest').addEventListener('click', () => { AU.unlock(); AU.sfx('coin'); });
     $('#fxOn').addEventListener('change', (e) => { settings.scenes = e.target.checked; saveSettings(); });
     $('#animSel').addEventListener('change', (e) => { settings.anim = e.target.value; saveSettings(); applySettings(); });
+    $('#themeSel').addEventListener('change', (e) => { const t = e.target.value; applyTheme(t); if (t === 'auto') store.del(THEME_KEY); else store.set(THEME_KEY, t); });
+    $('#textSel').addEventListener('change', (e) => { settings.text = +e.target.value; saveSettings(); applySettings(); });
+    $('#hapticOn').addEventListener('change', (e) => { settings.haptics = e.target.checked; saveSettings(); haptic('kill'); });
   }
   function renderSoundBtn() {
     const b = $('#soundBtn');
@@ -897,6 +920,15 @@
     $('#menuBtn').addEventListener('click', () => showStart(true));
     $('#savesBtn').addEventListener('click', () => { if (!ui.busy) showSaves(); });
     $('#themeBtn').addEventListener('click', toggleTheme);
+    // Fullscreen, where the browser supports it (not on iPhones).
+    const fb = $('#fullBtn'), docEl = document.documentElement;
+    if (docEl.requestFullscreen && document.fullscreenEnabled) {
+      fb.hidden = false;
+      fb.addEventListener('click', () => {
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        else docEl.requestFullscreen().catch(() => {});
+      });
+    }
 
     const board = $('#board');
     // Listen on the whole map area so taps just outside the drawn map count too.
@@ -1455,14 +1487,17 @@
   }
 
   // ------------------------------------------------------------------- theme
+  // Themes: Parchment (light), Dungeon (dark), High contrast; none = match the device.
   function applyTheme(t) {
-    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    if (t === 'light' || t === 'dark' || t === 'contrast') document.documentElement.setAttribute('data-theme', t);
     else document.documentElement.removeAttribute('data-theme');
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', getComputedStyle(document.documentElement).getPropertyValue('--card').trim() || '#fffaf0');
   }
   function toggleTheme() {
     const cur = document.documentElement.getAttribute('data-theme') ||
       (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-    const next = cur === 'dark' ? 'light' : 'dark';
+    const next = { light: 'dark', dark: 'contrast', contrast: 'light' }[cur] || 'light';
     applyTheme(next);
     store.set(THEME_KEY, next);
   }
@@ -1483,6 +1518,11 @@
     ui.journalSeen = ui.toastSeq = game.s.logSeq || 0;
     render();
     showStart(false);
+  }
+
+  // Installable app / offline play: needs https (or localhost); skipped on file:// and plain http.
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 
   window.DiceDelve = { get game() { return game; }, render };

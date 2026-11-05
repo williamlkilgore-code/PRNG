@@ -536,6 +536,15 @@ Objects are never removed from the array, because portals point at each other by
 
 ## 6. Rendering (`render.js`)
 
+**Presentation layers (experimental branch).** The board SVG holds five layers, drawn bottom to top:
+- `.static`: the paper, room tints, grid, paper grain, walls, wobbly ink edges and door jambs. The ink look comes from an `ink-wobble` filter (`feTurbulence` plus `feDisplacementMap`). There's also a vignette, and dust motes on dark floors. It's drawn once per floor.
+- `.dyn`: objects, the trail, fog, the remembered enemies of a level 5 Orb, the stairs and the arrows. It's redrawn every step. Enemies bob and the stairs pulse, using a negative `animation-delay` taken from the clock, so the motion stays continuous across redraws.
+- `.pawn-layer`: one persistent `#pawn` (`ui.js` `renderPawn`), moved with a CSS `transform` so it slides. It hops on every step, blinks on portal jumps and topples on death. Its symbol is `i-player` or `i-player-<class>`.
+- `.preview-layer`: the dashed move preview and shot lines.
+- `.fx-layer`: floating numbers (`game.drainPopups()`), hit flashes and kill bursts.
+
+Lock, key and portal colours are CSS variables (`--c-gold` and so on), so the high-contrast theme can swap them. That theme also shows a letter (`.cb-letter`) on keys, locks and portals. `miniMap(game)` draws the final floor for the run summary.
+
 - **Symbol sheet.** `SYMBOLS` is a string of `<pattern>` and `<symbol>` definitions. `ui.js` injects it once into a hidden `<svg>` in `#sprites`. The board and every HTML icon draw from it with `<use href="#id">`.
   - **Map symbols:** `i-start`, `i-stairs`, `i-coin`, `i-chest`, `i-heart`, `i-medpack`, `i-web`, `i-enemy`, `i-key`, `i-lock`, `i-door-open`, `i-portal`, `i-player` (the base hero; `i-player-fighter`, `i-player-wizard` and `i-player-rogue` once a class is chosen), `i-cross`
   - **Spell and shop icons:** `i-sp-reroll`, `i-sp-invis`, `i-sp-orb`, `i-sp-maxhp`, `i-sp-heal`, `i-sp-str`, `i-sp-gamble`
@@ -625,6 +634,25 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
 
 ## 7. UI layer (`ui.js`)
 
+**Settings (experimental).** One **Settings** screen (the gear button) covers:
+- sound and music;
+- **Animations**: full, reduced (slides and floating numbers only) or off, applied as an `html.anim-*` class;
+- cut-scenes;
+- **Theme**: device, Parchment (`light`), Dungeon (`dark`) or High contrast (`contrast`), stored in `dicedelve-theme`;
+- **text size**: 1, 1.15 or 1.3, through the `--ui-scale` CSS `zoom` on the top bar, the panel and pop-ups;
+- **vibration**: `navigator.vibrate` on hits, kills, mimics, level-ups and death.
+
+These are stored in `dicedelve-settings-v1` as `{anim, scenes, haptics, text}`; the older `dicedelve-fx-v1` key is read once. `prefers-reduced-motion` forces animations and cut-scenes off. The theme button cycles through the three themes, and a Fullscreen button appears where the browser supports it.
+
+**Juice.**
+- **Coins:** a coin flies from the square to `#coinStat`, which pulses.
+- **Damage:** a red vignette, plus a shake at full animation.
+- **Dice:** they tumble through random faces before landing.
+- **New floor:** a `#curtain` card names it ("Floor 7 · dark", "Floor 5 · Shop").
+- **Death:** the board darkens before the run summary (cause of death, stats, mini map). The engine records `stats.cause` (not saved) and `stats.casts` (saved).
+
+**Installable app.** `manifest.webmanifest`, `icons/` (an SVG, PNGs at 192 and 512, and an apple-touch icon) and `sw.js`, which uses the network first with the cache as the offline fallback. Bump `VERSION` when the file list changes. The service worker is registered only on `https:` or localhost, so `file://` and plain `http://` work as before, without install or offline.
+
 **Cut-scenes (experimental).** `playEvents()` turns engine events into scenes:
 - **`kill`:** a burst and slash on the enemy's square, in the board's `.fx-layer`, using `game.lastKill`.
 - **`mimic`:** the chest or door jolts, then its jaws snap open, using `game.lastMimic`.
@@ -633,7 +661,7 @@ Everything about a floor (layout, items, enemies, shop stock, dice) comes from t
 
 The last three play one at a time in the `#scene` overlay, about 1.5 s each. Tap or Space skips a scene.
 - The level chooser waits for the queue to finish (`whenScenesDone`).
-- The scenes are turned on or off in Sound & effects (`dicedelve-fx-v1`), and are always off with `prefers-reduced-motion`.
+- The scenes are turned on or off in Settings (`dicedelve-settings-v1`, `scenes`), and are always off with `prefers-reduced-motion`.
 - `lastKill` and `lastMimic` live on the Game instance and are never saved.
 
 

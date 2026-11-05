@@ -50,7 +50,21 @@ A procedurally generated roll-and-write dungeon crawler that runs in the browser
   - **Re-roll:** after rolling, 1 re-roll attempt per level. Level 5: choose one die's value.
   - **Glowing Orb:** dark floors only. Light radius 4/5/6/7 for the rest of the floor. Level 5: the whole floor is lit for 2 turns, then radius 8, and enemies you've seen stay marked.
 
-**Sound:** sound effects and ambient music, all generated in the browser with Web Audio. There are no audio files. The music changes with the floor: calm in the tutorial, tense on dark floors, cheerful in shops. Sound starts after your first tap. Set volumes from **Sound** in the menu, or press **M** to mute.
+**Sound:** sound effects and ambient music, all generated in the browser with Web Audio. There are no audio files. The music changes with the floor: calm in the tutorial, tense on dark floors, cheerful in shops. Sound starts after your first tap. Press **M** to mute.
+
+**Look and feel:**
+- **The board:** hand-drawn ink walls on grainy paper, tinted rooms and door frames.
+- **Motion:** the pawn slides between squares; damage, healing and coin numbers float up; coins fly to your purse; a red flash and shake show hits; dice tumble; each floor gets a title card; there's a run summary with a mini map when you fall.
+- **Dark floors:** torch light flickers and dust drifts.
+
+**Settings** (gear button):
+- sound and music volume;
+- animations (full, reduced or off; always off if your device asks for reduced motion) and cut-scenes;
+- theme: Parchment, Dungeon, or High contrast (colourblind-safe colours, plus letters on keys, locks and portals);
+- text size;
+- vibration on Android phones.
+
+**Install / offline:** served over HTTPS (or `localhost`), the game can be installed to a home screen and played offline (`manifest.webmanifest`, `sw.js`, `icons/`). From `file://` or plain `http://` it simply runs in the browser.
 
 **Controls:** tap Roll in the center of the direction pad, then tap anywhere on the map in the direction you want to go (or use the pad or keyboard). The layout adapts to desktop, phone portrait and phone landscape. The journal sits behind a button, and important events pop up briefly over the map.
 
@@ -64,4 +78,5 @@ The game seed decides every floor, so the same seed always gives the same dungeo
 - `js/game.js`: game state and the turn and movement engine. It has no DOM code.
 - `js/render.js`: SVG symbols, the board, and the dice.
 - `js/audio.js`: generated sound effects and music (Web Audio).
-- `js/ui.js`: input, animation, modals, and the shop.
+- `js/ui.js`: input, animation, modals, settings, and the shop.
+- `sw.js`, `manifest.webmanifest`, `icons/`: the installable app and offline cache.

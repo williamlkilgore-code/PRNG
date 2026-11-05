@@ -4,10 +4,13 @@
   const DC = root.DC;
   const C = 32; // cell size in SVG units
 
+  // Lock, key and portal colours (CSS variables, so the high-contrast theme can
+  // swap in colourblind-safe ones).
   const COLORS = {
-    gold: '#d9a514', crimson: '#c8372d', azure: '#2f7fd8', emerald: '#2a9d5c',
-    violet: '#8e4fc9', teal: '#159a8c',
+    gold: 'var(--c-gold, #d9a514)', crimson: 'var(--c-crimson, #c8372d)', azure: 'var(--c-azure, #2f7fd8)',
+    emerald: 'var(--c-emerald, #2a9d5c)', violet: 'var(--c-violet, #8e4fc9)', teal: 'var(--c-teal, #159a8c)',
   };
+  const COLOR_LETTER = { gold: 'G', crimson: 'C', azure: 'A', emerald: 'E', violet: 'V', teal: 'T' };
   const ANGLE = { E: 0, SE: 45, S: 90, SW: 135, W: 180, NW: 225, N: 270, NE: 315 };
 
   const ink = 'stroke:var(--ink);stroke-linecap:round;stroke-linejoin:round';
@@ -416,6 +419,10 @@
     const opened = o.done && (o.type === 'lock' || o.mimic === 'door'); // a dead door mimic leaves a doorway
     if (opened) sym = 'i-door-open';
     let out = use(sym, o.x, o.y, color);
+    // High-contrast theme: a letter on keys, locks and portals (hidden otherwise).
+    if (COLOR_LETTER[o.color] && !o.done && ['key', 'lock', 'portal'].includes(o.type)) {
+      out += `<text class="cb-letter" x="${o.x * C + C - 7}" y="${o.y * C + C - 4}">${COLOR_LETTER[o.color]}</text>`;
+    }
     if (o.type === 'enemy' && !o.done && o.maxHp > 1) {
       const bx = o.x * C + C - 9, by = o.y * C + 2;
       out += `<g class="badge"><circle cx="${bx + 4}" cy="${by + 4}" r="6"/><text x="${bx + 4}" y="${by + 7.6}">${o.hp}</text></g>`;
