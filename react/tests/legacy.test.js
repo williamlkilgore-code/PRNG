@@ -1,0 +1,1085 @@
+/* Ported from web/tests/run-tests.js: generator, movement, spells, shop and
+ * save invariants. Combat-specific checks live in battle.test.js. */
+import { it, expect } from 'vitest';
+import { DC } from './dc.js';
+const { Game, rules: R, generateLevel, reach, DIRS, OPP } = DC;
+
+let failures = [];
+function ok(cond, msg) { if (!cond && failures.length < 30) failures.push(msg); }
+function test(name, fn) {
+  it(name, () => { failures = []; fn(); expect(failures).toEqual([]); });
+}
+
+const SEEDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'].map(DC.hashStr);
+
+test('formulas', () => {
+  ok(R.coinValue(9) === 1 && R.coinValue(10) === 2, 'coin value');
+  ok(R.heartValue(1) === 4 && R.heartValue(5) === 5 && R.heartValue(30) === 10, 'heart value');
+  ok(R.rangedDamage(0) === 2 && R.rangedDamage(3) === 5 && R.rangedDamage(6, 2) === 12, 'ranged damage');
+});
+
+test('shop schedule', () => {
+  for (const seed of SEEDS.concat([1, 2, 3, 99999])) {
+    const f = R.shopSchedule(seed, 600);
+    ok(f[0] === 5, 'floor 5 is a shop');
+    for (let i = 1; i < f.length; i++) {
+      const gap = f[i] - f[i - 1];
+      ok(gap >= 4 && gap <= 10, `gap ${gap} out of range`);
+    }
+    for (let i = 2; i < f.length; i++) ok(f[i] - f[i - 2] >= 10, 'more than 2 shops in 10 floors');
+    for (let a = 1; a < 590; a++) ok(f.filter((x) => x >= a && x < a + 10).length <= 2, 'window check');
+    ok(!R.isShopFloor(seed, 1) && !R.isShopFloor(seed, 4) && R.isShopFloor(seed, 5), 'isShopFloor');
+  }
+});
+
+test('level generation invariants (floors 1-80, 6 seeds)', () => {
+  for (const seed of SEEDS) {
+    for (let floor = 1; floor <= 80; floor++) {
+      if (R.isShopFloor(seed, floor)) continue;
+      const L = generateLevel(seed, floor);
+      const at = (x, y) => (x < 0 || y < 0 || x >= L.w || y >= L.h ? 0 : L.tiles[y * L.w + x]);
+      const tag = `seed ${seed} floor ${floor}`;
+
+      const minRoom = floor <= R.EARLY_FLOORS ? 5 : floor <= R.BLEND_FLOORS ? 4 : 3;
+      for (const r of L.rooms) ok(r.x1 - r.x0 - 1 >= minRoom && r.y1 - r.y0 - 1 >= minRoom, `room < ${minRoom}x${minRoom} ${tag}`);
+      ok(L.rooms.length >= 3, `fewer than 3 rooms ${tag}`);
+      if (floor <= R.EARLY_FLOORS) ok(L.objects.filter((o) => o.type === 'lock' && !o.mimic).length <= 1, `more than 1 lock early ${tag}`);
+      else if (floor <= R.BLEND_FLOORS) ok(L.objects.filter((o) => o.type === 'lock' && !o.mimic).length <= 2, `more than 2 locks on floors 11-15 ${tag}`);
+      const inRoom = (o, r) => o.x > r.x0 && o.x < r.x1 && o.y > r.y0 && o.y < r.y1;
+      const startRoom = L.rooms.find((r) => inRoom(L.start, r));
+      ok(L.objects.some((o) => o.type === 'heart' && !inRoom(o, startRoom)), `no heart outside the start room ${tag}`);
+      if (floor < R.PORTALS_FROM) ok(!L.objects.some((o) => o.type === 'portal'), `portal before floor ${R.PORTALS_FROM} ${tag}`);
+      ok(L.w <= 21 && L.h <= 15, `map larger than 21x15 ${tag}`);
+      for (let x = 0; x < L.w; x++) ok(at(x, 0) === 0 && at(x, L.h - 1) === 0, `border open ${tag}`);
+      for (let y = 0; y < L.h; y++) ok(at(0, y) === 0 && at(L.w - 1, y) === 0, `border open ${tag}`);
+      ok(at(L.start.x, L.start.y) === 1 && at(L.stairs.x, L.stairs.y) === 1, `start/stairs on floor ${tag}`);
+      ok(L.start.x !== L.stairs.x || L.start.y !== L.stairs.y, `start == stairs ${tag}`);
+
+      const seen = new Set();
+      for (const o of L.objects) {
+        const k = o.y * L.w + o.x;
+        ok(!seen.has(k), `stacked objects ${tag}`);
+        seen.add(k);
+        ok(!(o.x === L.start.x && o.y === L.start.y) && !(o.x === L.stairs.x && o.y === L.stairs.y), `object on start/stairs ${tag}`);
+        if (o.type !== 'lock') ok(at(o.x, o.y) === 1, `object not in a room ${tag}`);
+      }
+
+      const locks = L.objects.filter((o) => o.type === 'lock' && !o.mimic);
+      const keys = L.objects.filter((o) => o.type === 'key');
+      ok(floor > 1 || locks.length === 0, 'no locks on floor 1');
+      const blocked = new Set(locks.map((o) => o.y * L.w + o.x));
+      const zone = reach(L, L.start.x, L.start.y, blocked);
+      for (const d of locks) {
+        ok(at(d.x, d.y) === 2, `lock not on doorway ${tag}`);
+        const ns = at(d.x, d.y - 1) === 0 && at(d.x, d.y + 1) === 0 && at(d.x - 1, d.y) && at(d.x + 1, d.y);
+        const ew = at(d.x - 1, d.y) === 0 && at(d.x + 1, d.y) === 0 && at(d.x, d.y - 1) && at(d.x, d.y + 1);
+        ok(ns || ew, `lock without walls on opposite sides ${tag}`);
+        const key = keys.filter((k) => k.color === d.color);
+        ok(key.length === 1, `lock without exactly one key ${tag}`);
+        if (key[0]) ok(zone.seen[key[0].y * L.w + key[0].x] === 1, `key not reachable from start ${tag}`);
+      }
+      const open = reach(L, L.start.x, L.start.y, null);
+      ok(open.seen[L.stairs.y * L.w + L.stairs.x] === 1, `stairs unreachable ${tag}`);
+      const floorCells = L.tiles.filter((t) => t !== 0).length;
+      ok(open.size === floorCells, `disconnected floor ${tag}`);
+
+      const portals = L.objects.filter((o) => o.type === 'portal');
+      ok(portals.length % 2 === 0, `odd portals ${tag}`);
+      for (const p of portals) {
+        const q = L.objects[p.pair];
+        ok(q && q.type === 'portal' && L.objects[q.pair] === p && q.color === p.color, `portal pairing ${tag}`);
+        // Portals never bypass a lock.
+        const z = reach(L, p.x, p.y, blocked);
+        ok(z.seen[q.y * L.w + q.x] === 1, `portal crosses a locked door ${tag}`);
+      }
+      if (floor >= 2) ok(L.objects.some((o) => o.type === 'web'), `missing webs ${tag}`);
+      if (floor >= 3) ok(L.objects.some((o) => o.type === 'enemy'), `missing enemies ${tag}`);
+    }
+  }
+});
+
+test('tutorial floors', () => {
+  const count = (L, t) => L.objects.filter((o) => o.type === t).length;
+  const roomAt = (L, x, y) => L.rooms.findIndex((r) => x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1);
+  const generateTut = DC.generateTutorial;
+  for (const seed of SEEDS) {
+    const f1 = generateTut(seed, 1);
+    ok(f1.w === 7 && f1.h === 7 && f1.rooms.length === 1, 'floor 1 is one 5x5 room');
+    ok(Math.abs(f1.start.x - f1.stairs.x) === 4 && Math.abs(f1.start.y - f1.stairs.y) === 4, 'floor 1 stairs in opposite corner');
+    ok(count(f1, 'coin') >= 2 && !count(f1, 'web') && !count(f1, 'enemy') && !count(f1, 'lock'), 'floor 1 contents');
+
+    const f2 = generateTut(seed, 2);
+    ok(f2.rooms.length === 2 && f2.doorways.length === 1, 'floor 2 is two rooms and a doorway');
+    ok(count(f2, 'web') >= 1 && !count(f2, 'enemy') && !count(f2, 'lock'), 'floor 2 contents');
+    const sr = roomAt(f2, f2.start.x, f2.start.y);
+    ok(roomAt(f2, f2.stairs.x, f2.stairs.y) !== sr, 'floor 2 stairs in the other room');
+    ok(f2.objects.filter((o) => o.type === 'web').every((o) => roomAt(f2, o.x, o.y) !== sr), 'floor 2 web in start room');
+
+    const f3 = generateTut(seed, 3);
+    ok(f3.rooms.length === 4 && f3.doorways.length === 3, 'floor 3 is four rooms in a chain');
+    ok(count(f3, 'lock') === 1 && count(f3, 'key') === 1 && count(f3, 'enemy') === 1 && count(f3, 'web') === 1 &&
+      count(f3, 'chest') === 1 && count(f3, 'heart') === 1 && count(f3, 'medpack') === 1 && !count(f3, 'portal'), 'floor 3 contents');
+    const s3 = roomAt(f3, f3.start.x, f3.start.y);
+    ok(f3.objects.filter((o) => o.type === 'web' || o.type === 'enemy').every((o) => roomAt(f3, o.x, o.y) !== s3), 'floor 3 obstacle in start room');
+    const lock = f3.objects.find((o) => o.type === 'lock');
+    const z = reach(f3, f3.start.x, f3.start.y, new Set([lock.y * f3.w + lock.x]));
+    ok(!z.seen[f3.stairs.y * f3.w + f3.stairs.x], 'floor 3 lock guards the stairs');
+
+    ok(f1.tutorial && f3.tutorial && !generateLevel(seed, 1).tutorial, 'tutorial layouts are separate from floor 1');
+  }
+  const skip = Game.create('skipper');
+  ok(skip.s.floor === 1 && !skip.s.tutorial && !skip.s.level.tutorial && skip.s.checkpoint.floor === 1 && !skip.s.checkpoint.tutorial, 'no tutorial: starts on floor 1');
+  // Playing the tutorial: 3 tutorial floors, then floor 1; they don't count.
+  const t = Game.create('learner', { tutorial: true });
+  ok(t.s.tutorial && t.s.floor === 1 && t.s.level.tutorial && t.s.checkpoint.tutorial, 'tutorial starts at tutorial 1');
+  for (let k = 1; k <= 3; k++) {
+    ok(t.s.tutorial && t.s.floor === k, 'tutorial ' + k);
+    t.s.player.x = t.s.level.stairs.x; t.s.player.y = t.s.level.stairs.y;
+    t.completeFloor();
+    ok(t.s.phase === 'levelDone' && t.s.stats.floorsCleared === 0, 'tutorial floors do not count');
+    if (k === 3) ok(t.s.summary.next === 1 && !t.s.summary.nextTutorial && !t.s.checkpoint.tutorial && t.s.checkpoint.floor === 1, 'after tutorial 3 comes floor 1');
+    t.nextFloor();
+  }
+  ok(!t.s.tutorial && t.s.floor === 1 && !t.s.level.tutorial, 'real floor 1 after the tutorial');
+  const mid = Game.fromSave(JSON.parse(JSON.stringify(Game.create('learner', { tutorial: true }).s.checkpoint)));
+  ok(mid.game && mid.game.s.tutorial && mid.game.s.floor === 1, 'tutorial checkpoint round-trips');
+});
+
+test('determinism', () => {
+  const a = JSON.stringify(generateLevel(SEEDS[0], 12));
+  const b = JSON.stringify(generateLevel(SEEDS[0], 12));
+  ok(a === b, 'same seed differs');
+  ok(a !== JSON.stringify(generateLevel(SEEDS[1], 12)), 'different seeds equal');
+});
+
+// Hand-built level for focused movement tests.
+// Give a test hero a class (level 1, as if just chosen). Rogues get 3 stones.
+function setClass(g, cls) {
+  const p = g.s.player;
+  p.cls = cls; p.level = 1;
+  p.xp = Math.max(p.xp, R.levelThreshold(1));
+  p.maxSp = p.sp = R.CLASSES[cls].sp;
+  if (cls === 'rogue') p.ammo = 3;
+  if (cls === 'wizard') { p.known = { invis: 1, reroll: 1, orb: 1 }; p.casts = R.wizardSlots(1); }
+  return g;
+}
+// The sandbox hero has 10 health (the older scenarios were written for it);
+// pass `cls` to make it a Fighter, Rogue or Wizard.
+function sandbox(rows, extra, cls) {
+  const g = Game.create('sandbox');
+  g.s.player.hp = g.s.player.maxHp = 10;
+  if (cls) setClass(g, cls);
+  const h = rows.length, w = rows[0].length;
+  const L = { w, h, tiles: [], rooms: [], doorways: [], objects: [], trail: [], floor: g.s.floor };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const c = rows[y][x];
+    L.tiles.push(c === '#' ? 0 : c === 'D' ? 2 : 1);
+    if (c === '@') L.start = { x, y };
+    if (c === '>') L.stairs = { x, y };
+  }
+  (extra || []).forEach((o) => L.objects.push(o));
+  g.s.level = L;
+  g.s.player.x = L.start.x; g.s.player.y = L.start.y;
+  L.trail = [[[L.start.x, L.start.y]]];
+  g.s.phase = 'roll';
+  g.rebuildIndex();
+  return g;
+}
+// One-die variant: scenarios written for a total of a + b use a single
+// chosen die showing that total, so step counts and parity stay the same.
+function forceRoll(g, a, b) {
+  g.s.phase = 'roll';
+  g.roll();
+  g.s.dice = [a + b, a + b];
+  g.s.die = 0;
+  g.computeSteps();
+}
+// Slide until the move ends; battles are fought with plain attacks.
+function run(g) {
+  let n = 0;
+  while ((g.s.phase === 'moving' || g.s.phase === 'battle') && n++ < 400) {
+    if (g.s.phase === 'battle') { if (!g.s.battle.over) g.battleAct('attack'); else g.endBattle(); } else g.step();
+  }
+}
+
+test('even = orthogonal, odd = diagonal, moves = total', () => {
+  const g = sandbox([
+    '###############',
+    '#@............#',
+    '#.............#',
+    '#.............#',
+    '#............>#',
+    '###############',
+  ]);
+  forceRoll(g, 2, 2);
+  ok(g.s.parity === 'ortho' && g.s.steps === 4, 'parity even');
+  ok(g.availableDirs().sort().join() === 'E,S', 'ortho options from corner');
+  g.choose('E'); run(g);
+  ok(g.s.player.x === 5 && g.s.player.y === 1 && g.s.phase === 'roll', 'moved 4 east');
+  forceRoll(g, 1, 2);
+  ok(g.s.parity === 'diag' && g.availableDirs().sort().join() === 'SE,SW', 'diag options');
+});
+
+test('blocked: redirect, no doubling back unless only move', () => {
+  const g = sandbox([
+    '#######',
+    '#@....#',
+    '#.....#',
+    '#.....#',
+    '#....>#',
+    '#######',
+  ]);
+  forceRoll(g, 4, 4); // 8 orthogonal
+  g.choose('E'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.move.stepsLeft === 4, 'blocked with 4 left');
+  ok(g.availableDirs().join() === 'S', 'cannot double back west while south is open');
+  g.choose('S'); run(g);
+  ok(g.s.player.x === 5 && g.s.player.y === 4 || g.s.phase === 'levelDone', 'reached stairs corner');
+
+  // Dead end corridor: reverse is the only way, so it is allowed.
+  const h = sandbox([
+    '#####',
+    '#...#',
+    '#@###',
+    '#.#>#',
+    '#####',
+  ]);
+  forceRoll(h, 3, 3);
+  h.choose('N'); run(h);
+  ok(h.s.phase === 'redirect', 'blocked at top');
+  ok(h.availableDirs().join() === 'E', 'turn east');
+  h.choose('E'); run(h);
+  ok(h.s.phase === 'redirect' && h.availableDirs().join() === 'W', 'only reverse remains, so it is allowed');
+});
+
+test('diagonal redirect never turns straight back', () => {
+  const g = sandbox([
+    '#########',
+    '#>......#',
+    '#.......#',
+    '#.......#',
+    '#..@....#',
+    '#########',
+  ]);
+  forceRoll(g, 3, 4); // 7 diagonal
+  g.choose('NE'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.player.x === 6 && g.s.player.y === 1, 'blocked by top wall');
+  g.choose('SE'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.player.x === 7 && g.s.player.y === 2, 'blocked by side wall');
+  ok(g.availableDirs().join() === 'SW', 'only SW (fresh squares) offered, not NW (retraces): ' + g.availableDirs());
+  ok(!g.choose('NW'), 'NW refused');
+});
+
+// Plays the current floor with a seeded policy until it ends; returns a summary.
+// Make any owed class or level-up choices at random.
+function settleLevels(g, pick) {
+  const p = g.s.player;
+  while (g.levelsOwed() > 0) {
+    const open = DC.SPELL_IDS.filter((k) => p.known[k] < R.SPELL_MAX);
+    const ok1 = p.cls ? g.chooseBoon(pick.pick(g.boonChoices()), pick.pick(open))
+      : g.chooseClass(pick.pick(DC.CLASS_IDS), pick.pick(DC.SPELL_IDS));
+    if (!ok1) throw new Error('level choice refused');
+  }
+}
+
+function playFloor(g, policySeed) {
+  const pick = new DC.RNG(policySeed);
+  for (let i = 0; i < 3000; i++) {
+    const s = g.s;
+    if (s.phase === 'roll') { settleLevels(g, pick); g.roll(); if (g.s.die === null) g.pickDie(pick.int(0, 1)); }
+    else if (s.phase === 'battle') fight(g, pick);
+    else if (s.phase === 'moving') g.step();
+    else if (s.phase === 'choose' || s.phase === 'redirect') {
+      const d = g.availableDirs();
+      if (!d.length) { if (!g.passTurn()) g.stopMove(); } else g.choose(pick.pick(d));
+      while (g.s.phase === 'moving' || g.s.phase === 'stopPrompt') { if (g.s.phase === 'stopPrompt') g.continueMove(); else g.step(); }
+    } else break;
+  }
+  const p = g.s.player;
+  return JSON.stringify([g.s.phase, g.s.turn, p.hp, p.coins, p.x, p.y, g.s.level && g.s.level.trail]);
+}
+
+test('checkpoint saves', () => {
+  const g = Game.create('checkpoint');
+  const start = JSON.parse(JSON.stringify(g.s.checkpoint));
+  ok(start.floor === 1 && start.seedText === 'checkpoint' && Game.validateCheckpoint(start) === null, 'checkpoint at floor start');
+  ok(JSON.stringify(start).length < 520, 'checkpoint is small');
+  g.s.player.hp = g.s.player.maxHp = 1000;
+  const cpHigh = JSON.parse(JSON.stringify(g.checkpointFor(1)));
+  const a = playFloor(g, 42);
+  ok(g.s.phase === 'levelDone' && g.s.checkpoint.floor === 2, 'checkpoint moves to next floor on completion');
+
+  // Reloading a floor gives the same layout and the same dice: identical play.
+  const r = Game.fromSave(cpHigh);
+  ok(r.game && r.game.s.floor === 1 && r.game.s.turn === cpHigh.turn, 'loads checkpoint');
+  ok(JSON.stringify(r.game.s.level.tiles) === JSON.stringify(Game.create('checkpoint').s.level.tiles), 'same layout');
+  ok(playFloor(r.game, 42) === a, 'replayed floor is identical');
+
+  // Stats carry over.
+  const c = Game.fromSave({ ...start, floor: 7, player: { hp: 3, maxHp: 14, str: 4, coins: 55, spells: { invis: 1, reroll: 3, orb: 0 } } });
+  const p = c.game.s.player;
+  ok(c.game.s.floor === 7 && p.hp === 3 && p.maxHp === 14 && p.str === 4 && p.coins === 55 && p.spells.reroll === 3 && p.keys.length === 0, 'stats restored');
+  ok(Game.fromSave({ app: 'dice-delve', save: start }).game, 'export wrapper accepted');
+
+  // Shop floors load into the shop.
+  const shop = Game.fromSave({ ...start, floor: 5 });
+  ok(shop.game.s.phase === 'shop', 'shop checkpoint');
+
+  // Older full-snapshot saves convert to a checkpoint.
+  const old = Game.create('legacy');
+  old.s.player.coins = 9;
+  ok(Game.fromSave(JSON.parse(JSON.stringify(old.s))).game.s.player.coins === 9, 'legacy mid-floor save');
+  old.s.phase = 'levelDone';
+  ok(Game.fromSave(JSON.parse(JSON.stringify(old.s))).game.s.floor === 2, 'legacy finished-floor save');
+  old.s.phase = 'dead';
+  ok(Game.fromSave(JSON.parse(JSON.stringify(old.s))).error, 'legacy dead save refused');
+});
+
+test('checkpoint validation', () => {
+  const base = Game.create('valid').s.checkpoint;
+  const bad = [
+    (cp) => { cp.player.hp = 99; },
+    (cp) => { cp.player.hp = 0; },
+    (cp) => { cp.player.coins = '<img src=x onerror=alert(1)>'; },
+    (cp) => { cp.player.coins = -5; },
+    (cp) => { cp.floor = 0; },
+    (cp) => { cp.floor = '3'; },
+    (cp) => { delete cp.player.spells.orb; },
+    (cp) => { cp.player.spells.reroll = 1.5; },
+    (cp) => { cp.seedText = 'x'.repeat(500); },
+    (cp) => { cp.seedText = '   '; },
+    (cp) => { cp.v = 99; },
+    (cp) => { cp.stats = { kills: 'lots' }; },
+  ];
+  bad.forEach((mut, i) => {
+    const cp = JSON.parse(JSON.stringify(base));
+    mut(cp);
+    ok(Game.validateCheckpoint(cp) !== null && Game.fromSave(cp).error, 'tampered checkpoint ' + i + ' accepted');
+  });
+  ok(Game.fromSave(null).error && Game.fromSave('x').error && Game.fromSave([]).error, 'junk rejected');
+});
+
+test('redirect: a full circuit still cannot turn straight back', () => {
+  // 3x3 room, roll 10 straight: E, S, W, N around the room and back to the
+  // start with 2 moves left. Only E is offered; S (straight back) is not.
+  const g = sandbox([
+    '#####',
+    '#@..#',
+    '#...#',
+    '#...#',
+    '#####',
+    '#>..#',
+    '#####',
+  ]);
+  forceRoll(g, 4, 6);
+  g.choose('E'); run(g);
+  ok(g.availableDirs().join() === 'S', 'after E: only S');
+  g.choose('S'); run(g);
+  ok(g.availableDirs().join() === 'W', 'after S: only W');
+  g.choose('W'); run(g);
+  ok(g.availableDirs().join() === 'N', 'after W: only N');
+  g.choose('N'); run(g);
+  ok(g.s.player.x === 1 && g.s.player.y === 1 && g.s.move.stepsLeft === 2, 'back at the start with 2 moves');
+  ok(g.availableDirs().join() === 'E' && !g.choose('S'), 'circuit done: E only, never straight back S: ' + g.availableDirs());
+});
+
+test('redirect allows any legal direction except straight back', () => {
+  // Odd roll: NE into the right wall, NW into the top wall. NE (a doorway)
+  // and SW are both onto fresh squares, so both are offered; SE retraces.
+  const g = sandbox([
+    '#####D##D##',
+    '#.........#',
+    '#.........#',
+    '#.........#',
+    '#.........#',
+    '#......@..#',
+    '###########',
+    '#>........#',
+    '###########',
+  ]);
+  forceRoll(g, 4, 5);
+  g.choose('NE'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.player.x === 9 && g.s.player.y === 3, 'blocked by right wall');
+  g.choose('NW'); run(g);
+  ok(g.s.phase === 'redirect' && g.s.player.x === 7 && g.s.player.y === 1, 'blocked by top wall');
+  ok(g.availableDirs().sort().join() === 'NE,SW', 'NE and SW offered, SE refused: ' + g.availableDirs());
+  ok(!g.choose('SE'), 'SE retraces and is refused');
+});
+
+test('one-die movement', () => {
+  const map = ['###########', '#.........#', '#....@....#', '#.........#', '#........>#', '###########'];
+  const g = setClass(sandbox(map), 'rogue');
+  g.s.phase = 'roll'; g.roll();
+  g.s.dice = [3, 4]; g.s.die = null; g.computeSteps();
+  ok(g.s.steps === 0 && g.s.parity === null && g.availableDirs().length === 0, 'no directions before picking a die');
+  ok(!g.choose('E') && !g.passTurn() && !g.canShoot(), 'no move, pass or shot before picking');
+  ok(g.pickDie(0) && g.s.steps === 3 && g.s.parity === 'diag', 'odd die: diagonal');
+  ok(g.availableDirs().every((d) => d.length === 2), 'diagonal directions');
+  ok(g.pickDie(1) && g.s.steps === 4 && g.s.parity === 'ortho', 'switch to the even die: orthogonal');
+  ok(g.availableDirs().every((d) => d.length === 1) && g.canShoot(), 'straight directions, can shoot');
+  ok(!g.pickDie(2), 'only dice 0 and 1');
+  ok(g.choose('W'), 'move');
+  ok(!g.pickDie(0), 'cannot switch after moving');
+  run(g);
+  ok(g.s.player.x === 1 && g.s.phase === 'roll', 'moved 4 squares with the even die');
+  // Doubles are picked automatically.
+  g.roll(); g.s.dice = [2, 2]; g.s.die = null; g.computeSteps();
+  ok(g.s.die === 0 && g.s.steps === 2, 'doubles auto-picked');
+  // Webs halve the chosen die (min 1).
+  g.s.phase = 'roll'; g.s.player.webbed = true; g.roll();
+  g.s.dice = [1, 5]; g.s.die = null; g.pickDie(0);
+  ok(g.s.steps === 1 && g.s.halved, 'halved die is at least 1');
+  g.pickDie(1);
+  ok(g.s.steps === 2, '5 halved to 2');
+  // Sling range is the chosen die.
+  const h = sandbox(['###########', '#@.......E#', '#........>#', '###########'], [{ type: 'enemy', x: 9, y: 1, hp: 1, maxHp: 1 }], 'wizard');
+  h.roll(); h.s.dice = [6, 2]; h.s.die = null; h.pickDie(1);
+  ok(h.shotPath('E').cells.length === 2 && !h.shotPath('E').target, 'range 2');
+  h.pickDie(0);
+  ok(h.shotPath('E').cells.length === 6, 'range 6');
+  // Re-rolls keep the chosen die.
+  h.s.player.known.reroll = 2; h.s.player.casts = 5;
+  ok(h.cast('reroll'), 'cast re-roll');
+  h.d = () => 4; ok(h.rerollDie(1) && h.s.die === 0 && h.s.steps === 6, 're-roll keeps the choice');
+  h.s.rerolls = null; h.s.player.known.reroll = 5;
+  ok(h.cast('reroll') && h.setDie(0, 1) && h.s.die === 0 && h.s.steps === 1 && h.s.parity === 'diag', 'chosen value keeps the choice');
+});
+
+test('web stops and halves next move', () => {
+  const g = sandbox(['#########', '#@......#', '#......>#', '#########'], [{ type: 'web', x: 3, y: 1 }]);
+  forceRoll(g, 3, 3);
+  g.choose('E'); run(g);
+  ok(g.s.player.x === 3 && g.s.phase === 'roll' && g.s.player.webbed, 'stopped on web');
+  g.roll(); g.s.dice = [6, 2]; g.pickDie(0);
+  ok(g.s.steps === 3 && g.s.halved, 'halved next turn');
+  // Webs never affect shots: full range, and stones fly over webs.
+  const r = sandbox(['#########', '#@......#', '#......>#', '#########'], [{ type: 'web', x: 2, y: 1 }, { type: 'enemy', x: 7, y: 1, hp: 1, maxHp: 1 }], 'rogue');
+  r.s.player.webbed = true;
+  r.roll(); r.s.dice = [6, 2]; r.pickDie(0);
+  ok(r.s.steps === 3 && r.shotRange() === 6 && r.shotPath('E').cells.length === 6, 'webbed: move halved, shot range not');
+  ok(r.shoot('E').hit && r.s.level.objects[1].done && !r.s.level.objects[0].done, 'the stone flies over the web and hits');
+});
+
+test('locked door and key', () => {
+  const g = sandbox([
+    '#########',
+    '#@..#...#',
+    '#...D..>#',
+    '#...#...#',
+    '#########',
+  ], [{ type: 'lock', x: 4, y: 2, color: 'gold' }, { type: 'key', x: 2, y: 2, color: 'gold' }]);
+  g.s.player.x = 1; g.s.player.y = 2;
+  forceRoll(g, 3, 3);
+  g.choose('E'); run(g);
+  ok(g.s.player.keys.length === 0 && g.s.level.objects[1].done, 'picked up and used key');
+  ok(g.s.phase === 'levelDone', 'door opened and reached stairs');
+  const h = sandbox(['#########', '#@..#...#', '#...D..>#', '#...#...#', '#########'], [{ type: 'lock', x: 4, y: 2, color: 'gold' }]);
+  h.s.player.y = 2; h.s.player.x = 3;
+  forceRoll(h, 1, 1);
+  ok(!h.availableDirs().includes('E'), 'locked without key');
+});
+
+test('portal teleports and movement continues', () => {
+  const g = sandbox(['###########', '#@.P#.....#', '#...#.P..>#', '###########'],
+    [{ type: 'portal', x: 3, y: 1, color: 'violet', pair: 1 }, { type: 'portal', x: 6, y: 2, color: 'violet', pair: 0 }]);
+  g.s.player.y = 2; g.s.player.x = 1;
+  forceRoll(g, 1, 2); // diag
+  g.choose('NE'); run(g);
+  ok(g.s.player.x === 7 || g.s.phase !== 'moving', 'teleported');
+  const g2 = sandbox(['###########', '#@.P#.....#', '#...#.P..>#', '###########'],
+    [{ type: 'portal', x: 3, y: 1, color: 'violet', pair: 1 }, { type: 'portal', x: 6, y: 2, color: 'violet', pair: 0 }]);
+  forceRoll(g2, 3, 3);
+  g2.choose('E'); run(g2);
+  ok(g2.s.phase === 'levelDone', 'continued east after portal to the stairs');
+});
+
+test('spells: casting, charges and Wizard slots', () => {
+  const map = ['###########', '#@...#....#', '#....#...>#', '###########'];
+  ok(DC.SPELL_IDS.join() === 'invis,reroll,orb', 'three spells');
+  // Anyone else casts at level 1 with 3 charges.
+  const b = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }]);
+  b.s.player.spells.invis = 2;
+  ok(!b.canCast('invis'), 'two charges are not enough');
+  b.s.player.spells.invis = 4;
+  ok(b.cast('invis') && b.s.player.spells.invis === 1 && b.s.invis.turns === 1 && b.s.invis.level === 1, 'three charges: one level 1 cast');
+  ok(!b.canCast('invis'), 'not while already invisible');
+  forceRoll(b, 1, 1); b.choose('E'); run(b);
+  ok(b.s.player.x === 3 && b.s.player.hp === 10 && !b.s.level.objects[0].done && !b.s.invis, 'invisible pass, then it fades');
+  for (const cls of ['fighter', 'rogue']) {
+    const c = sandbox(map, null, cls); c.s.player.spells.reroll = 3; forceRoll(c, 1, 2);
+    ok(c.cast('reroll') && c.s.rerolls.left === 1, cls + ' casts with charges');
+  }
+  // Wizards cast known spells only, a number of times per floor set by their slots.
+  ok([1, 2, 3, 4, 7, 8, 20].map(R.wizardSlots).join() === '1,2,2,3,3,4,4', 'slots at levels 1, 2, 4 and 8');
+  const w = sandbox(map, null, 'wizard');
+  w.s.player.known = { invis: 2, reroll: 0, orb: 0 }; w.s.player.spells.reroll = 9; w.s.player.casts = 1;
+  forceRoll(w, 1, 2);
+  ok(!w.canCast('reroll'), 'a Wizard does not cast from charges or unknown spells');
+  ok(w.cast('invis') && w.s.player.casts === 0 && w.s.invis.turns === 2, 'known spell at its level');
+  w.s.invis = null;
+  ok(!w.canCast('invis'), 'no casts left this floor');
+  const wf = Game.create('casts'); setClass(wf, 'wizard'); wf.s.player.level = 4; wf.s.stats.kills = 62; wf.s.player.casts = 0;
+  wf.s.phase = 'levelDone'; wf.nextFloor();
+  ok(wf.s.player.casts === 3, 'casts refill each floor (level 4: 3 slots)');
+  // Upgrades: 3(n-1) charges of any spells to reach level n, up to 5.
+  ok([2, 3, 4, 5].map(R.upgradeCost).join() === '3,6,9,12', 'study costs 3/6/9/12');
+  const u = sandbox(map, null, 'wizard');
+  u.s.player.known = { invis: 0, reroll: 1, orb: 0 }; u.s.player.spells = { invis: 1, reroll: 1, orb: 0 };
+  ok(!u.canUpgrade('reroll') && !u.canUpgrade('invis'), 'not enough charges; unknown spell');
+  u.s.player.spells = { invis: 1, reroll: 1, orb: 1 };
+  ok(u.upgradeSpell('reroll') && u.s.player.known.reroll === 2 && u.totalCharges() === 0, 'any charges count (3 for level 2)');
+  u.s.player.spells = { invis: 20, reroll: 2, orb: 6 };
+  ok(u.upgradeSpell('reroll') && u.s.player.spells.reroll === 0 && u.s.player.spells.invis === 16 && u.s.player.spells.orb === 6, 'own charges first, then the largest pool');
+  ok(u.upgradeSpell('reroll') && u.upgradeSpell('reroll') && u.s.player.known.reroll === 5 && u.totalCharges() === 1, '30 charges in all to reach level 5');
+  ok(!u.upgradeSpell('reroll'), 'level 5 is the top');
+  const nb = sandbox(map, null, 'rogue'); nb.s.player.spells.orb = 50;
+  ok(!nb.canUpgrade('orb'), 'only Wizards upgrade');
+});
+
+test('spells: invisibility', () => {
+  // x turns, counting the turn it is cast.
+  const g = sandbox(['###########', '#@........#', '#.........#', '#........>#', '###########'], [{ type: 'enemy', x: 8, y: 2, hp: 2, maxHp: 2, stalker: true }], 'wizard');
+  g.s.player.known.invis = 3; g.s.player.casts = 5;
+  ok(g.cast('invis'), 'cast in the roll phase');
+  for (let t = 0; t < 3; t++) {
+    ok(!!g.s.invis && !g.stalkerSees(g.s.level.objects[0]), 'stalkers cannot see you, turn ' + (t + 1));
+    forceRoll(g, 1, 1); g.passTurn() || (g.choose(g.availableDirs()[0]), run(g));
+  }
+  ok(!g.s.invis && g.stalkerSees(g.s.level.objects[0]), 'gone after 3 turns; seen again');
+  // Level 5: walk through a wall; the spell ends that turn.
+  const h = sandbox(['#######', '#@#...#', '#.#..>#', '#######'], null, 'wizard');
+  h.s.player.known.invis = 5; h.s.player.casts = 5;
+  forceRoll(h, 1, 1); h.s.steps = 1;
+  ok(h.cast('invis') && h.s.invis.turns === 5, 'level 5: 5 turns');
+  ok(!h.availableDirs().includes('E'), 'needs enough movement to clear the wall');
+  h.s.steps = 2;
+  ok(h.availableDirs().includes('E'), 'can walk through with 2 moves');
+  h.choose('E'); run(h);
+  ok(h.s.player.x === 3 && !h.s.invis, 'through the wall, and the spell ended');
+  const lo = sandbox(['#######', '#@#...#', '#.#..>#', '#######'], null, 'wizard');
+  lo.s.player.known.invis = 4; lo.s.player.casts = 5; forceRoll(lo, 1, 1); lo.cast('invis');
+  ok(!lo.availableDirs().includes('E'), 'no wall walking below level 5');
+});
+
+test('spells: re-roll', () => {
+  const g = sandbox(['###########', '#@........#', '#........>#', '###########'], null, 'wizard');
+  g.s.player.known.reroll = 3; g.s.player.casts = 5;
+  ok(!g.canCast('reroll'), 'only after rolling');
+  g.roll(); g.s.dice = [2, 5]; g.s.die = 0; g.computeSteps();
+  ok(g.cast('reroll') && g.s.rerolls.left === 3 && !g.canCast('reroll'), 'three attempts');
+  g.d = () => 6;
+  ok(g.rerollDie(0) && g.rerollDie(1) && g.rerollDie(0) && !g.rerollDie(1) && g.s.dice.join() === '6,6', 'then no more');
+  ok(!g.setDie(0, 3), 'no choosing below level 5');
+  g.choose('E');
+  ok(!g.s.rerolls, 'attempts end when you move');
+  run(g);
+  g.s.player.known.reroll = 5;
+  g.roll(); g.s.dice = [1, 1]; g.computeSteps();
+  ok(g.cast('reroll') && g.s.rerolls.choose && !g.rerollDie(0), 'level 5: choose instead of rolling');
+  ok(g.setDie(1, 6) && !g.setDie(0, 6) && g.s.dice.join() === '1,6', 'one die set');
+});
+
+test('spells: glowing orb', () => {
+  const map = ['###############', '#@............#', '#.............#', '#.............#', '#............>#', '###############'];
+  const dark = (extra) => { const g = sandbox(map, extra, 'wizard'); g.s.floor = 10; g.s.level.dark = true; g.s.player.casts = 9; g.rebuildIndex(); return g; };
+  const lit = sandbox(map, null, 'wizard');
+  ok(!lit.canCast('orb'), 'not on a lit floor');
+  ok([1, 2, 3, 4, 5].map(R.orbRadius).join() === '4,5,6,7,8', 'radius 4/5/6/7, then 8');
+  for (let lv = 1; lv <= 4; lv++) {
+    const g = dark(); g.s.player.known.orb = lv;
+    ok(g.cast('orb') && g.s.level.orbRadius === 3 + lv && g.isVisible(1 + 3 + lv, 1) && !g.isVisible(2 + 3 + lv, 1), 'level ' + lv + ' radius');
+    ok(!g.canCast('orb'), 'no weaker or equal recast');
+  }
+  const base = dark(); base.s.player.cls = null; base.s.player.level = 0; base.s.player.spells.orb = 3;
+  ok(base.cast('orb') && base.s.level.orbRadius === 4, 'charges: a level 1 orb');
+  // Level 5: the whole floor for 2 turns, then radius 8; enemies remembered.
+  const g = dark([{ type: 'enemy', x: 13, y: 3, hp: 1, maxHp: 1, stalker: true }]);
+  g.s.player.known.orb = 5;
+  ok(g.cast('orb') && g.s.level.floodTurns === 2 && g.isVisible(13, 4), 'whole floor lit');
+  const e = g.s.level.objects[0];
+  ok(e.lastSeen && e.lastSeen.join() === '13,3', 'enemy position remembered');
+  g.finishTurnFlags();
+  ok(g.s.level.floodTurns === 1 && g.isVisible(13, 4), 'still flooded on turn 2');
+  g.finishTurnFlags();
+  ok(g.s.level.floodTurns === 0 && !g.isVisible(13, 4) && g.isVisible(9, 1) && g.s.level.orbRadius === 8, 'then radius 8');
+  ok(e.lastSeen.join() === '13,3', 'memory kept');
+});
+
+test('dark floor selection and generation', () => {
+  for (const seed of SEEDS) {
+    let dark = 0, eligible = 0;
+    for (let f = 1; f <= 200; f++) {
+      const d = R.isDarkFloor(seed, f);
+      if (f < 6) ok(!d, 'dark before floor 6');
+      if (R.isShopFloor(seed, f)) ok(!d, 'dark shop floor');
+      if (d) ok(!R.isDarkFloor(seed, f - 1), 'two dark floors in a row');
+      if (f >= 6 && !R.isShopFloor(seed, f)) { eligible++; dark += d ? 1 : 0; }
+    }
+    ok(dark / eligible > 0.12 && dark / eligible < 0.4, 'dark frequency ' + (dark / eligible).toFixed(2));
+    for (let f = 2; f <= 60; f++) {
+      if (R.isShopFloor(seed, f)) continue;
+      const L = generateLevel(seed, f);
+      const torches = L.objects.filter((o) => o.type === 'torch');
+      const chests = L.objects.filter((o) => o.type === 'darkchest');
+      ok(!!L.dark === R.isDarkFloor(seed, f), 'level dark flag');
+      if (!L.dark) { ok(!torches.length && !chests.length, 'torch on a lit floor'); continue; }
+      ok(torches.length === 1 && chests.length === 1, 'dark floor needs one torch and one dark chest');
+      const t = torches[0];
+      const blocked = new Set(L.objects.filter((o) => o.type === 'lock').map((o) => o.y * L.w + o.x));
+      ok(reach(L, L.start.x, L.start.y, blocked).seen[t.y * L.w + t.x] === 1, 'torch not reachable without keys');
+      const sr = L.rooms.find((r) => L.start.x > r.x0 && L.start.x < r.x1 && L.start.y > r.y0 && L.start.y < r.y1);
+      ok(!(t.x > sr.x0 && t.x < sr.x1 && t.y > sr.y0 && t.y < sr.y1), 'torch in start room');
+    }
+  }
+  ok(R.darkMemory(6) === 'full' && R.darkMemory(19) === 'full' && R.darkMemory(20) === 'layout' &&
+    R.darkMemory(34) === 'layout' && R.darkMemory(35) === 'none', 'memory thresholds');
+});
+
+test('vision, memory and torches', () => {
+  const map = [
+    '###########',
+    '#@........#',
+    '#.........#',
+    '#....#....#',
+    '#....#...>#',
+    '###########',
+  ];
+  const dark = (extra) => { const g = sandbox(map, extra); g.s.floor = 10; g.s.level.dark = true; g.rebuildIndex(); return g; };
+  const g = dark();
+  const L = g.s.level, at = (x, y) => y * L.w + x;
+  ok(g.vis.size === 9 && g.isVisible(2, 2) && !g.isVisible(3, 1), 'no torch: only adjacent squares');
+  L.torchLit = true; g.updateVision();
+  ok(g.isVisible(5, 1) && !g.isVisible(6, 1), 'torch radius 4');
+  g.s.player.x = 4; g.s.player.y = 4; g.updateVision();
+  ok(g.isVisible(5, 4) && !g.isVisible(6, 4) && !g.isVisible(7, 4), 'walls block light');
+  ok(L.seen[at(5, 1)] === 1, 'seen squares remembered');
+  ok(!L.seenStairs, 'stairs not seen yet');
+  g.s.player.x = 8; g.s.player.y = 2; g.updateVision();
+  ok(L.seenStairs, 'stairs seen');
+  g.s.player.x = 1; g.s.player.y = 1; g.updateVision();
+  ok(L.seenStairs && !g.isVisible(9, 4), 'stairs stay marked when out of sight');
+
+  // Preview stops at the edge of sight.
+  const h = dark([{ type: 'web', x: 7, y: 1 }]);
+  forceRoll(h, 4, 4);
+  ok(h.previewPath('E').length === 1, 'preview limited to what you can see');
+
+  // Carried torch: only on a dark floor that isn't already lit.
+  const k = dark();
+  k.s.player.torches = 1;
+  ok(k.canLightTorch() && k.lightTorch() && k.s.player.torches === 0 && k.s.level.torchLit, 'light carried torch');
+  ok(!k.lightTorch(), 'cannot light twice');
+  const lit = sandbox(map);
+  lit.s.player.torches = 1;
+  ok(!lit.lightTorch() && lit.s.player.torches === 1, 'no torch on lit floors');
+
+  // Found torch lights at once; dark chest gives coins and a spell.
+  const t = dark([{ type: 'torch', x: 2, y: 1 }, { type: 'darkchest', x: 3, y: 1 }]);
+  forceRoll(t, 1, 1);
+  t.choose('E'); run(t);
+  const sp = Object.values(t.s.player.spells).reduce((a, b) => a + b, 0);
+  ok(t.s.level.torchLit && t.s.player.torches === 0, 'found torch lit');
+  ok(sp === 2 && t.s.player.coins >= 2, 'dark chest gave 2 spell charges and coins');
+  // Normal chests: a 15% chance (d100 <= 15) of one charge.
+  const ch = (roll) => { const c = sandbox(map, [{ type: 'chest', x: 2, y: 1 }]); forceRoll(c, 1, 1); c.d = (n) => (n === 100 ? roll : 1); c.choose('E'); run(c);
+    return Object.values(c.s.player.spells).reduce((a, b) => a + b, 0); };
+  ok(ch(15) === 1 && ch(16) === 0, 'chest charge on 15 or less');
+
+  // The torch burns out when the floor ends; carried torches are saved.
+  const run2 = Game.create('torchy');
+  run2.s.level.torchLit = true;
+  run2.s.phase = 'levelDone'; run2.nextFloor();
+  ok(!run2.s.level || !run2.s.level.torchLit, 'torch resets on a new floor');
+  run2.s.player.torches = 2;
+  const cp = JSON.parse(JSON.stringify(run2.checkpointFor(3)));
+  ok(Game.fromSave(cp).game.s.player.torches === 2, 'torches saved');
+  delete cp.player.torches;
+  ok(Game.fromSave(cp).game.s.player.torches === 0, 'older saves get 0 torches');
+  cp.player.torches = -1;
+  ok(Game.fromSave(cp).error, 'bad torch count rejected');
+});
+
+test('sling and bodies', () => {
+  const map = ['###########', '#@........#', '#.....#...#', '#........>#', '###########'];
+  const g = sandbox(map, [{ type: 'enemy', x: 4, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 8, y: 1, hp: 2, maxHp: 2 }], 'rogue');
+  ok(g.s.player.ammo === 3 && !g.canShoot(), 'start with 3 ammo, no shot before rolling');
+  forceRoll(g, 1, 1); // range 2: too short to reach x=4
+  let r = g.shoot('E');
+  ok(r && !r.hit && g.s.player.ammo === 2 && g.s.phase === 'roll' && r.cells.length === 2, 'miss uses ammo and ends turn');
+  forceRoll(g, 3, 3); // range 6
+  ok(g.shotDirs().join() === 'E,S', 'even roll shoots straight, never straight into a wall');
+  r = g.shoot('E');
+  const e1 = g.s.level.objects[0];
+  ok(r.hit && e1.done && g.s.player.ammo === 1, 'hit kills first enemy only');
+  const body = g.s.level.objects.find((o) => o.type === 'body');
+  ok(body && body.x === 4 && body.ammo >= 1 && body.ammo <= 2, 'shot kill drops a body');
+  ok(!g.s.level.objects[1].done && g.s.level.objects[1].hp === 2, 'second enemy untouched');
+  // Walls stop shots.
+  g.s.player.x = 6; g.s.player.y = 3; // wall directly north at (6,2)
+  forceRoll(g, 3, 3);
+  ok(g.shotPath('N').cells.length === 0 && g.shotPath('S').cells.length === 0 && g.shotPath('E').cells.length === 3, 'walls stop the shot');
+  // Walk over the body to collect ammo.
+  g.s.player.x = 1; g.s.player.y = 1;
+  const before = g.s.player.ammo;
+  forceRoll(g, 1, 2); g.s.parity = 'ortho'; g.s.steps = 3;
+  g.choose('E'); run(g);
+  ok(g.s.player.ammo === before + body.ammo && body.done, 'body ammo picked up');
+  // Melee kills drop bodies.
+  const m = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 7, y: 3, hp: 1, maxHp: 1 }], 'rogue');
+  forceRoll(m, 1, 1);
+  m.choose('E'); run(m);
+  ok(m.s.level.objects.some((o) => o.type === 'body' && o.x === 3), 'melee kill drops body');
+  const none = sandbox(map, null, 'rogue'); none.s.player.ammo = 0; forceRoll(none, 3, 3);
+  ok(!none.canShoot() && !none.shoot('E'), 'no shot without ammo');
+});
+
+test('stalkers', () => {
+  for (const seed of SEEDS) {
+    for (let f = 4; f <= 40; f++) {
+      if (R.isShopFloor(seed, f)) continue;
+      const n = generateLevel(seed, f).objects.filter((o) => o.stalker).length;
+      ok(n === Math.min(R.stalkerCount(f), generateLevel(seed, f).objects.filter((o) => o.type === 'enemy').length), 'stalker count');
+      if (f < 12) ok(n === 0, 'stalker before floor 12');
+    }
+  }
+  ok(R.stalkerCount(12) === 1 && R.stalkerCount(20) === 2 && R.stalkerCount(99) === 3, 'stalker count formula');
+  const map = ['###########', '#@........#', '#.........#', '#####.....#', '#.........#', '#........>#', '###########'];
+  const st = (x, y, hp) => ({ type: 'enemy', x, y, hp: hp || 1, maxHp: hp || 1, stalker: true });
+  // In line of sight: moves one square closer after a turn.
+  let g = sandbox(map, [st(7, 1)]);
+  g.s.floor = 12; forceRoll(g, 1, 1); g.passTurn = undefined; g.endTurn();
+  ok(g.s.level.objects[0].x === 6 && g.s.level.objects[0].y === 1, 'stalker steps toward you');
+  // Behind a wall: stays put.
+  g = sandbox(map, [st(2, 4)]);
+  g.endTurn();
+  ok(g.s.level.objects[0].x === 2 && g.s.level.objects[0].y === 4, 'no sight, no move');
+  // Never steps into webs or items.
+  g = sandbox(map, [st(3, 1), { type: 'web', x: 2, y: 1 }, { type: 'coin', x: 2, y: 2 }]);
+  g.endTurn();
+  const o = g.s.level.objects[0];
+  ok(!(o.x === 2 && o.y === 1) && !(o.x === 2 && o.y === 2), 'stalker avoids webs and items');
+  // Adjacent: attacks, can be killed, leaves a body.
+  g = sandbox(map, [st(2, 1, 1)]);
+  g.s.floor = 12; g.s.player.hp = g.s.player.maxHp = 100;
+  g.endTurn();
+  ok(g.s.phase === 'battle' && g.s.battle.origin === 'stalker', 'an adjacent stalker starts a battle');
+  run(g);
+  ok(g.s.phase === 'roll' && g.s.level.objects[0].done && g.s.level.objects.some((x) => x.type === 'body'), 'stalker fought and killed');
+  g = sandbox(map, [st(2, 1, 5)]);
+  g.s.player.hp = 1; g.d = () => 20;
+  g.endTurn(); run(g);
+  ok(g.s.phase === 'dead', 'stalker can kill you');
+  // Dark floors: only within 2 squares unless your torch is lit.
+  g = sandbox(map, [st(6, 1)]);
+  g.s.level.dark = true; g.rebuildIndex();
+  g.endTurn();
+  ok(g.s.level.objects[0].x === 6, 'dark, no torch: far stalker waits');
+  g.s.level.torchLit = true;
+  g.endTurn();
+  ok(g.s.level.objects[0].x === 5, 'torchlight draws it from afar');
+  g = sandbox(map, [st(3, 1)]);
+  g.s.level.dark = true; g.rebuildIndex();
+  g.endTurn();
+  ok(g.s.level.objects[0].x === 2, 'dark, no torch: close stalker hunts');
+});
+
+test('lock picks and dexterity', () => {
+  const map = ['#########', '#@..#...#', '#...D..>#', '#...#...#', '#########'];
+  const door = () => ({ type: 'lock', x: 4, y: 2, color: 'gold' });
+  let g = sandbox(map, [door()]);
+  g.s.player.x = 3; g.s.player.y = 2; // right next to the door
+  forceRoll(g, 3, 3);
+  ok(!g.availableDirs().includes('E'), 'no pick, no door');
+  g.s.player.lockpicks = 1;
+  ok(g.availableDirs().includes('E') && g.legalMove('E', 6).kind === 'pick', 'pick makes the door choosable');
+  g.s.player.x = 2; // one step away: slide into the door
+  g.choose('E'); run(g);
+  ok(g.s.phase === 'pickPrompt' && g.pickDoor() === g.s.level.objects[0] && g.s.player.x === 3, 'prompt at the door');
+  g.d = () => 11; // 11 + DEX 1 = 12 >= gold 12
+  let r = g.pickLock();
+  ok(r.ok && g.s.player.lockpicks === 0 && g.s.level.objects[0].done && g.s.phase === 'moving', 'success opens and continues');
+  run(g);
+  ok(g.s.phase === 'levelDone', 'move continued to the stairs');
+
+  g = sandbox(map, [door()]);
+  g.s.player.x = 2; g.s.player.y = 2; g.s.player.lockpicks = 1;
+  forceRoll(g, 3, 3); g.choose('E'); run(g);
+  g.d = () => 10; // 10 + 1 = 11 < 12
+  r = g.pickLock();
+  ok(!r.ok && g.s.player.lockpicks === 0 && !g.s.level.objects[0].done && g.s.phase === 'roll' && g.s.player.x === 3, 'failure breaks the pick and stops');
+
+  g = sandbox(map, [door()]);
+  g.s.player.x = 2; g.s.player.y = 2; g.s.player.lockpicks = 1;
+  forceRoll(g, 3, 3); g.choose('E'); run(g);
+  ok(g.declinePick() && g.s.phase === 'moving', 'decline');
+  run(g);
+  ok(g.s.player.lockpicks === 1 && !g.s.level.objects[0].done && (g.s.phase === 'redirect' || g.s.phase === 'roll'), 'declined door is solid this turn');
+  ok(R.pickChance(1, 'gold') === 0.5 && R.pickChance(1, 'emerald') === 0.2 && R.pickChance(3, 'gold') === 0.6, 'pick chances');
+
+  // Shop: DEX always on sale, price rises; checkpoints keep the new fields.
+  const sh = Game.create('dexshop');
+  sh.s.phase = 'levelDone'; sh.s.floor = 4; sh.nextFloor();
+  sh.s.player.coins = 200;
+  const di = sh.s.shop.items.findIndex((i) => i.id === 'dex');
+  const p1 = sh.price('dex');
+  ok(di === 3 && sh.buy(di) && sh.s.player.dex === 2 && sh.price('dex') > p1 && sh.buy(di) && sh.s.player.dex === 3, 'buy DEX repeatedly');
+  const cp = JSON.parse(JSON.stringify(sh.checkpointFor(6)));
+  cp.player.ammo = 7; cp.player.lockpicks = 2;
+  const back = Game.fromSave(cp).game.s.player;
+  ok(back.dex === 3 && back.ammo === 7 && back.lockpicks === 2, 'checkpoint keeps dex, ammo, picks');
+  delete cp.player.dex; delete cp.player.ammo; delete cp.player.lockpicks;
+  const old = Game.fromSave(cp).game.s.player;
+  ok(old.dex === 1 && old.ammo === R.START_AMMO && old.lockpicks === 0, 'older saves get defaults');
+  cp.player.dex = 'x';
+  ok(Game.fromSave(cp).error, 'bad dex rejected');
+});
+
+test('mimics: generation', () => {
+  let eligible = 0, withMimic = 0, chests = 0, doors = 0;
+  for (const seed of SEEDS) for (let f = 4; f <= 80; f++) {
+    const L = generateLevel(seed, f);
+    const ms = L.objects.filter((o) => o.type === 'mimic' || o.mimic);
+    ok(ms.length <= 1, `more than one mimic on floor ${f}`);
+    if (f < R.MIMIC_FROM) { ok(ms.length === 0, `mimic before floor ${R.MIMIC_FROM} (${f})`); continue; }
+    eligible++;
+    if (!ms.length) continue;
+    withMimic++;
+    const m = ms[0];
+    if (m.type === 'mimic') { chests++; continue; }
+    doors++;
+    ok(m.type === 'lock' && L.tiles[m.y * L.w + m.x] === 2, 'door mimic sits in a doorway');
+    const all = L.tiles.filter((t) => t !== 0).length;
+    ok(reach(L, L.start.x, L.start.y, new Set([m.y * L.w + m.x])).size === all - 1, 'door mimic never on the only route');
+    const locked = new Set(L.objects.filter((o) => o.type === 'lock').map((o) => o.y * L.w + o.x));
+    const z = reach(L, L.start.x, L.start.y, locked);
+    L.objects.filter((o) => o.type === 'key' || o.type === 'torch').forEach((o) => ok(z.seen[o.y * L.w + o.x], 'key/torch still reachable past a door mimic'));
+    ok(!L.objects.some((o) => o !== m && o.x === m.x && o.y === m.y), 'door mimic shares its square');
+  }
+  const rate = withMimic / eligible;
+  console.log(`     (${withMimic}/${eligible} eligible floors: ${chests} chests, ${doors} doors)`);
+  ok(rate > 0.18 && rate < 0.42, 'mimic rate near 30%: ' + rate);
+  ok(chests > 0 && doors > 0, 'both kinds appear');
+});
+
+test('move and range boosts', () => {
+  const map = ['############', '#@.........#', '#..........#', '#.........>#', '############'];
+  const g = sandbox(map, null, 'rogue');
+  g.s.player.moveBoost = 2;
+  forceRoll(g, 1, 1); // die 2, may go 2..4
+  g.choose('E');
+  g.step();
+  ok(g.s.phase === 'moving' && g.s.player.x === 2, 'no stop before the die value');
+  g.step();
+  ok(g.s.phase === 'stopPrompt' && g.s.player.x === 3 && g.canStop(), 'stop offered after the die value');
+  ok(g.continueMove() && g.s.phase === 'moving', 'keep going');
+  g.step();
+  ok(g.s.phase === 'stopPrompt' && g.s.player.x === 4, 'stop offered again');
+  ok(g.stopMove() && g.s.phase === 'roll' && g.s.player.x === 4, 'stop ends the turn there');
+  forceRoll(g, 1, 1); g.choose('E'); run(g);
+  while (g.s.phase === 'stopPrompt') { g.continueMove(); run(g); }
+  ok(g.s.player.x === 8 && g.s.phase === 'roll', 'full move is die + boost');
+  ok(!g.stopMove(), 'no stop outside a move');
+  // Without a boost there is never a stop prompt.
+  const plain = sandbox(map, null, 'fighter'); forceRoll(plain, 1, 1); plain.choose('E'); run(plain);
+  ok(plain.s.player.x === 3 && plain.s.phase === 'roll', 'no boost, no stop');
+
+  // Range: free aim at enemies within |dx| + |dy| <= range, with line of sight.
+  const rmap = ['###########', '#@...#....#', '#.........#', '#........>#', '###########'];
+  const enemies = [{ type: 'enemy', x: 3, y: 2, hp: 1, maxHp: 1 }, { type: 'enemy', x: 7, y: 1, hp: 1, maxHp: 1 }, { type: 'enemy', x: 4, y: 3, hp: 1, maxHp: 1 }];
+  const r = sandbox(rmap, enemies, 'rogue');
+  forceRoll(r, 1, 1);
+  ok(r.freeTargets().length === 0, 'no range boost, no free aim');
+  r.s.player.range = 3;
+  ok(r.freeTargets().join() === '0', 'only the enemy within 3 steps');
+  r.s.player.range = 5;
+  ok(r.freeTargets().join() === '0,2', 'range 5 adds the second; the third is behind a wall');
+  const res = r.shootAt(2);
+  ok(res && res.hit && r.s.level.objects[2].done && r.s.player.ammo === 2 && r.s.phase === 'roll', 'free shot hits and ends the turn');
+  ok(!r.shootAt(0), 'no free shot outside the choose phase');
+  r.s.player.ammo = 0; forceRoll(r, 1, 1);
+  ok(r.freeTargets().length === 0, 'rogue needs stones');
+});
+
+test('class checkpoints', () => {
+  const g = Game.create('classy');
+  setClass(g, 'wizard');
+  Object.assign(g.s.player, { known: { invis: 3, reroll: 0, orb: 1 }, range: 2, level: 1, casts: 0 });
+  const cp = JSON.parse(JSON.stringify(g.checkpointFor(4)));
+  ok(cp.v === 5 && Game.validateCheckpoint(cp) === null, 'v5 checkpoint valid');
+  const back = Game.fromSave(cp).game.s.player;
+  ok(back.cls === 'wizard' && back.level === 1 && back.range === 2 && back.known.invis === 3 && back.known.orb === 1 && back.casts === 1, 'class and spell levels restored, casts refilled');
+  const bad = [
+    (c) => { c.player.cls = 'bard'; }, (c) => { c.player.level = 0; }, (c) => { c.player.level = 5; },
+    (c) => { c.player.known = { invis: 6, reroll: 0, orb: 0 }; }, (c) => { c.player.known = { invis: 0, reroll: 0, orb: 0 }; },
+    (c) => { delete c.player.known; }, (c) => { c.player.cls = 'fighter'; }, (c) => { c.player.range = -1; },
+    (c) => { c.tutorial = 'yes'; }, (c) => { c.tutorial = true; c.floor = 4; },
+  ];
+  bad.forEach((mut, i) => { const c = JSON.parse(JSON.stringify(cp)); mut(c); ok(Game.fromSave(c).error, 'bad class checkpoint ' + i); });
+  // Version 2 saves: no class; old floors 1-3 were the tutorial, later floors move up by 3.
+  // Version 3 saves: old spells sold, Wizard slots become known spells.
+  const v3 = { v: 3, seedText: 'old3', floor: 4, tutorial: false,
+    player: { hp: 5, maxHp: 10, str: 1, coins: 2, spells: { noclip: 1, fireball: 2, luck: 0, reroll: 4, invis: 1 }, cls: 'wizard', level: 1, slots: ['fireball', 'reroll'], range: 0, moveBoost: 0 },
+    stats: { kills: 10, coins: 0, floorsCleared: 3 } };
+  const o3 = Game.fromSave(v3).game;
+  ok(o3 && o3.s.player.coins === 2 + 3 * R.spellCoinValue(4) && o3.s.player.spells.reroll === 4 && o3.s.player.spells.invis === 1 && o3.s.player.spells.orb === 0, 'v3: removed spells sold, others kept');
+  ok(o3 && o3.s.player.known.reroll === 1 && o3.s.player.known.orb === 1 && o3.s.player.known.invis === 0 && o3.s.player.casts === 1, 'v3: slots become known spells');
+  ok(Game.fromSave(Object.assign({}, v3, { player: Object.assign({}, v3.player, { slots: ['nope'] }) })).error, 'v3: bad slots rejected');
+  const v2 = { v: 2, seedText: 'old', floor: 9, player: { hp: 8, maxHp: 10, str: 2, coins: 4, spells: { noclip: 0, fireball: 1, luck: 0, reroll: 0, invis: 0 } }, stats: { kills: 12, coins: 0, floorsCleared: 8 } };
+  const o = Game.fromSave(v2).game;
+  ok(o && o.s.floor === 6 && !o.s.tutorial && !o.s.player.cls && o.s.player.xp === 0, 'v2 save converts (old kills give no XP)');
+  const o2 = Game.fromSave(Object.assign({}, v2, { floor: 2 })).game;
+  ok(o2 && o2.s.tutorial && o2.s.floor === 2, 'v2 tutorial floor');
+});
+
+test('popups and run stats (UI hooks)', () => {
+  const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
+  const g = sandbox(map, [{ type: 'coin', x: 2, y: 1 }, { type: 'enemy', x: 4, y: 1, hp: 2, maxHp: 2 }]);
+  g.drainPopups();
+  forceRoll(g, 3, 3); g.choose('E'); run(g);
+  const pp = g.drainPopups();
+  ok(pp.some((q) => q.kind === 'coin' && q.text === '+1' && q.x === 2), 'coin popup at the square');
+  ok(pp.some((q) => q.kind === 'xp'), 'XP popup after a battle');
+  ok(g.drainPopups().length === 0, 'drained');
+  g.s.player.hp = 5; g.heal(2);
+  ok(g.drainPopups().some((q) => q.kind === 'heal' && q.text === '+2'), 'heal popup');
+  g.s.player.spells.invis = 3; g.s.phase = 'roll'; g.cast('invis');
+  ok(g.s.stats.casts === 1, 'casts counted');
+  const cp = JSON.parse(JSON.stringify(g.checkpointFor(2)));
+  ok(cp.stats.casts === 1 && cp.stats.cause === undefined && Game.fromSave(cp).game.s.stats.casts === 1, 'casts saved, cause not');
+  cp.stats.casts = -1;
+  ok(Game.fromSave(cp).error, 'bad casts rejected');
+  ok(!JSON.stringify(g.s).includes('popups'), 'popups never saved');
+});
+
+test('sound events', () => {
+  const map = ['###########', '#@........#', '#.........#', '#........>#', '###########'];
+  const g = sandbox(map, [{ type: 'coin', x: 2, y: 1 }, { type: 'enemy', x: 4, y: 1, hp: 1, maxHp: 1 }, { type: 'web', x: 6, y: 1 }]);
+  g.s.player.hp = g.s.player.maxHp = 100;
+  g.drainEvents();
+  forceRoll(g, 3, 3);
+  g.choose('E'); run(g);
+  const ev = g.drainEvents();
+  ['roll', 'step', 'coin', 'battle', 'kill', 'web'].forEach((e) => ok(ev.includes(e), 'missing event ' + e + ': ' + ev.join()));
+  ok(g.drainEvents().length === 0, 'drainEvents empties the list');
+  ok(!JSON.stringify(g.s).includes('"events"') && !('events' in g.checkpointFor(2)), 'events never saved');
+  // Sling, stairs, lock picks.
+  const h = sandbox(map, [{ type: 'enemy', x: 3, y: 1, hp: 20, maxHp: 20 }], 'rogue');
+  forceRoll(h, 3, 3); h.drainEvents();
+  h.shoot('E');
+  ok(h.drainEvents().join() === 'shoot,hit', 'shot events');
+  forceRoll(h, 1, 1); h.s.player.y = 3; h.s.player.x = 7; h.drainEvents();
+  h.choose('E'); run(h);
+  ok(h.drainEvents().includes('stairs'), 'stairs event');
+  const k = sandbox(['#########', '#@..#...#', '#...D..>#', '#...#...#', '#########'], [{ type: 'lock', x: 4, y: 2, color: 'gold' }]);
+  k.s.player.x = 2; k.s.player.y = 2; k.s.player.lockpicks = 1;
+  forceRoll(k, 3, 3); k.choose('E'); run(k); k.drainEvents();
+  k.d = () => 1; k.pickLock();
+  ok(k.drainEvents().includes('pickFail'), 'pick fail event');
+});
+
+test('shop and gamble', () => {
+  const g = Game.create('shoptest');
+  while (g.s.floor < 4) { g.s.phase = 'levelDone'; g.nextFloor(); }
+  g.s.phase = 'levelDone'; g.nextFloor();
+  ok(g.s.floor === 5 && g.s.phase === 'shop', 'floor 5 shop');
+  const ids = g.s.shop.items.map((i) => i.id);
+  ok(ids.slice(0, 4).join() === 'heal,potion,str,dex' && ids.length === 8 && new Set(ids).size === 8, 'shop items');
+  g.s.player.coins = 100;
+  ok(g.buy(2) && g.s.player.str === 2, 'buy strength');
+  const pots = g.s.player.potions;
+  ok(g.buy(1) && g.buy(1) && g.s.player.potions === pots + 2, 'potions can be bought again and again');
+  ok(!g.buy(0), 'cannot heal at full');
+  g.s.player.hp = 3;
+  ok(g.buy(0) && g.s.player.hp === g.s.player.maxHp, 'heal');
+  const gi = g.s.shop.items.findIndex((i) => i.id === 'gamble');
+  if (gi >= 0) {
+    for (let roll = 1; roll <= 6; roll++) {
+      g.s.shop.gambleClosed = false;
+      g.d = () => roll;
+      const c = g.s.player.coins;
+      const r = g.gamble(4);
+      const exp = roll <= 2 ? -4 : roll <= 4 ? 0 : roll === 5 ? 2 : 8;
+      ok(r && g.s.player.coins - c === exp, 'gamble payout ' + roll);
+      ok(!!g.s.shop.gambleClosed === (roll <= 2), 'table closes only after a loss');
+      if (roll <= 2) ok(g.gamble(1) === null, 'no gambling after a loss');
+    }
+  }
+  g.nextFloor();
+  ok(g.s.floor === 6 && g.s.level, 'left shop');
+});
+
+// Play a battle to the end with random legal actions, then leave it.
+function fight(g, pick) {
+  let n = 0;
+  while (!g.s.battle.over) {
+    const acts = g.battleActions().filter((a) => a.ok);
+    ok(acts.length > 0, 'a battle with no actions');
+    const a = pick.pick(acts);
+    ok(g.battleAct(a.id, a.arg), 'battle action refused');
+    if (++n > 300) { ok(false, 'runaway battle'); break; }
+  }
+  return g.endBattle();
+}
+
+test('random play simulation', () => {
+  let floors = 0, deaths = 0;
+  for (let run = 0; run < 25; run++) {
+    const g = Game.create('sim' + run);
+    const pick = new DC.RNG(run + 1);
+    g.s.player.hp = g.s.player.maxHp = 1000; // survive long enough to explore
+    if (run % 2) g.s.player.xp = R.levelThreshold(4); // start some runs a few levels up, to exercise boosts
+    Object.assign(g.s.player.spells, { invis: 6, reroll: 6, orb: 6 }); // charges to cast or study
+    for (let t = 0; t < 4000; t++) {
+      const s = g.s;
+      if (s.phase === 'dead') { deaths++; break; }
+      if (s.phase === 'levelDone' || s.phase === 'shop') { g.nextFloor(); floors++; if (s.floor > 30) break; continue; }
+      if (s.phase === 'battle') { fight(g, pick); continue; }
+      if (['moving', 'pickPrompt', 'stopPrompt'].includes(s.phase)) { g.step(); continue; }
+      if (s.phase === 'roll') {
+        settleLevels(g, pick);
+        for (const k of DC.SPELL_IDS) if (g.canUpgrade(k)) ok(g.upgradeSpell(k), 'upgrade');
+        if (pick.chance(0.1)) { const c = DC.SPELL_IDS.filter((k) => g.canCast(k)); if (c.length) ok(g.cast(pick.pick(c)), 'cast before rolling'); }
+        ok(g.roll(), 'roll refused');
+        if (g.s.die === null) g.pickDie(pick.int(0, 1));
+        continue;
+      }
+      if (s.phase === 'choose' && g.canCast('reroll') && pick.chance(0.3)) {
+        ok(g.cast('reroll'), 'cast re-roll');
+        while (g.s.rerolls && g.s.rerolls.left > 0) { if (g.s.rerolls.choose) g.setDie(pick.int(0, 1), pick.int(1, 6)); else g.rerollDie(pick.int(0, 1)); }
+        continue;
+      }
+      if (s.phase === 'choose' && g.freeTargets().length && pick.chance(0.3)) { ok(g.shootAt(pick.pick(g.freeTargets())), 'free shot'); continue; }
+      if (s.phase === 'choose' && g.canShoot() && pick.chance(0.1)) { g.shoot(pick.pick(g.shotDirs())); continue; }
+      if (s.phase === 'choose' || s.phase === 'redirect') {
+        const d = g.availableDirs();
+        if (s.phase === 'redirect' && g.canStop() && pick.chance(0.3)) { ok(g.stopMove(), 'stop on redirect'); continue; }
+        if (!d.length) { ok(s.phase === 'choose', 'redirect with no options'); g.passTurn(); continue; }
+        g.choose(pick.pick(d));
+        let n = 0;
+        while (['moving', 'pickPrompt', 'stopPrompt', 'battle'].includes(g.s.phase)) {
+          if (g.s.phase === 'battle') { fight(g, pick); continue; }
+          if (g.s.phase === 'pickPrompt') { if (pick.chance(0.5)) g.pickLock(); else g.declinePick(); continue; }
+          if (g.s.phase === 'stopPrompt') {
+            const m = g.s.move;
+            ok(m.stepsLeft > 0 && m.stepsLeft <= m.extra, 'stop prompt only after the die value');
+            if (pick.chance(0.4)) g.stopMove(); else g.continueMove();
+            continue;
+          }
+          g.step(); ok(++n < 500, 'runaway move'); if (n >= 500) break;
+        }
+        const L = g.s.level;
+        if (L) ok(L.tiles[g.s.player.y * L.w + g.s.player.x] !== 0, 'player inside a wall');
+        continue;
+      }
+      ok(false, 'unexpected phase ' + s.phase);
+      break;
+    }
+    if (g.s.checkpoint) {
+      const why = Game.validateCheckpoint(JSON.parse(JSON.stringify(g.s.checkpoint)));
+      ok(!why || g.s.phase === 'dead', 'checkpoint fails validation: ' + why);
+    }
+  }
+  console.log(`     (simulated ${floors} floor transitions, ${deaths} deaths)`);
+  ok(floors > 50, 'random play makes progress');
+});
+
